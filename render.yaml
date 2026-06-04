@@ -1,0 +1,12 @@
+# Render.com Blueprint — One-Click-Deploy fuer KuhPoker.
+# In Render: "New +" -> "Blueprint" -> dieses Repo waehlen.
+services:
+  - type: web
+    name: kuhpoker
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
