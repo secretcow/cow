@@ -196,6 +196,32 @@ io.on('connection', (socket) => {
     broadcast(room);
   });
 
+  // Tisch verlassen und zurueck zur Lobby.
+  socket.on('leaveRoom', () => {
+    const room = rooms.get(socket.data.code);
+    const code = socket.data.code;
+    if (code) socket.leave(code);
+    socket.data.code = null;
+    if (!room) return;
+    const seat = seatBySocket(room, socket.id);
+    if (seat) {
+      if (room.table) {
+        // Laufendes Spiel: Sitz bleibt (gilt als getrennt), Indizes der Engine bleiben stabil.
+        seat.connected = false;
+      } else {
+        // Lobby-Phase: Sitz ganz entfernen.
+        room.players = room.players.filter((p) => p !== seat);
+      }
+    }
+    if (room.players.length === 0) {
+      cancelCleanup(room);
+      rooms.delete(room.code);
+      return;
+    }
+    broadcast(room);
+    maybeScheduleCleanup(room);
+  });
+
   socket.on('disconnect', () => {
     const room = rooms.get(socket.data.code);
     if (!room) return;

@@ -85,6 +85,7 @@ const I18N = {
     firstHand: 'Erste Hand starten',
     nextHand: 'Nächste Hand',
     showCards: '🃏 Karten zeigen',
+    leaveConfirm: 'Tisch verlassen und zurück zur Lobby?',
     rematch: 'Revanche',
     matchWon: '🏆 Du hast das Match gewonnen!',
     matchLost: '😿 Match verloren.',
@@ -168,6 +169,7 @@ const I18N = {
     firstHand: 'Start first hand',
     nextHand: 'Next hand',
     showCards: '🃏 Show cards',
+    leaveConfirm: 'Leave the table and return to the lobby?',
     rematch: 'Rematch',
     matchWon: '🏆 You won the match!',
     matchLost: '😿 Match lost.',
@@ -835,6 +837,20 @@ document.querySelectorAll('[data-quick]').forEach((b) => {
 $('nextHandBtn').onclick = () => socket.emit('startHand');
 $('showCardsBtn').onclick = () => socket.emit('showCards');
 $('rematchBtn').onclick = () => socket.emit('rematch');
+
+// Tisch verlassen -> zurueck zur Lobby. Loescht den gemerkten Raum, damit kein
+// automatisches Resume beim naechsten Laden passiert.
+$('leaveBtn').onclick = () => {
+  if (!confirm(t('leaveConfirm'))) return;
+  socket.emit('leaveRoom');
+  forgetRoom();
+  lastState = null;
+  lastLobby = null;
+  $('seats').innerHTML = '';
+  $('game').classList.add('hidden');
+  $('waiting').classList.add('hidden');
+  $('lobby').classList.remove('hidden');
+};
 
 // ---------- Toast ----------
 let toastTimer = null;
