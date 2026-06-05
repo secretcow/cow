@@ -43,6 +43,11 @@ assertCategory('Hohe Karte', hand(1, 2, 3, 4, 6, 7, 9), 2);
 // Keine Strasse bei Luecke
 assertCategory('Keine Strasse (Luecke)', hand(6, 7, 8, 10, 1, 2, 4), 2);
 
+// Wheel: Pferd zaehlt als niedrige Karte -> Pferd-Hahn-Gans-Katze-Hund ist Strasse
+assertCategory('Wheel 10-1-2-3-4', hand(10, 1, 2, 3, 4, 8, 9), 6);
+// Pferd ohne 1-2-3-4 ergibt KEINE Wheel
+assertCategory('Keine Wheel (10-1-2-3-5)', hand(10, 1, 2, 3, 5, 8, 9), 2);
+
 // Vergleiche
 function ev(...ranks) {
   return evaluate(hand(...ranks)).score;
@@ -62,6 +67,13 @@ assert('Kicker entscheidet', compareScores(ev(9, 9, 10, 2, 3, 1, 1), ev(9, 9, 8,
 assert('Hoehere Strasse gewinnt', compareScores(ev(6, 7, 8, 9, 10, 1, 1), ev(1, 2, 3, 4, 5, 9, 9)) > 0);
 // Gleiche Hand -> unentschieden
 assert('Split-Pot Gleichstand', compareScores(ev(9, 9, 5, 5, 10, 1, 2), ev(9, 9, 5, 5, 10, 3, 4)) === 0);
+
+// Wheel ist die NIEDRIGSTE Strasse: 1-2-3-4-5 schlaegt die Wheel
+assert('1-2-3-4-5 > Wheel', compareScores(ev(1, 2, 3, 4, 5, 8, 9), ev(10, 1, 2, 3, 4, 8, 9)) > 0);
+// Wheel schlaegt Drilling
+assert('Wheel > Drilling', compareScores(ev(10, 1, 2, 3, 4, 8, 9), ev(7, 7, 7, 1, 2, 5, 6)) > 0);
+// Hohe Strasse (6-10) schlaegt Wheel
+assert('6-7-8-9-10 > Wheel', compareScores(ev(6, 7, 8, 9, 10, 1, 1), ev(10, 1, 2, 3, 4, 8, 8)) > 0);
 
 console.log(`\n${pass} bestanden, ${fail} fehlgeschlagen`);
 process.exit(fail === 0 ? 0 : 1);

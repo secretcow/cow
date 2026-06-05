@@ -44,6 +44,15 @@ function score5(ranks) {
   const distinct = [...counts.keys()].sort((a, b) => b - a);
   const isStraight =
     distinct.length === 5 && distinct[0] - distinct[4] === 4;
+  // Wheel-Regel: das Pferd (10) zaehlt zusaetzlich als niedrigste Karte.
+  // Pferd-Hahn-Gans-Katze-Hund (10-1-2-3-4) ist die niedrigstmoegliche Strasse.
+  const isWheel =
+    distinct.length === 5 &&
+    distinct[0] === 10 &&
+    distinct[1] === 4 &&
+    distinct[2] === 3 &&
+    distinct[3] === 2 &&
+    distinct[4] === 1;
 
   if (counts4 === 4) {
     const quad = groups[0][0];
@@ -55,6 +64,10 @@ function score5(ranks) {
   }
   if (isStraight) {
     return [6, distinct[0]];
+  }
+  if (isWheel) {
+    // High-Card der Wheel = 4 (Hund), damit sie unter der 1-2-3-4-5-Strasse liegt.
+    return [6, 4];
   }
   if (counts3) {
     const kickers = groups
