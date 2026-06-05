@@ -123,6 +123,14 @@ input { font: inherit; }
 }
 .card.dealing { animation: dealIn 0.32s ease-out backwards; }
 
+/* Langsameres Aufdecken beim Showdown / freiwilligen Zeigen (Flip). */
+@keyframes cardReveal {
+  0%   { opacity: 0; transform: perspective(620px) rotateY(-92deg) scale(0.92); }
+  55%  { opacity: 1; }
+  100% { opacity: 1; transform: perspective(620px) rotateY(0deg) scale(1); }
+}
+.card.revealing { animation: cardReveal 0.62s cubic-bezier(0.22, 0.61, 0.36, 1) backwards; }
+
 .table {
   position: relative;
   width: min(960px, 96vw);

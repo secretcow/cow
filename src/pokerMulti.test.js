@@ -139,5 +139,37 @@ function players(n) {
   assert('2p toAct=0 (SB/Button)', t.toAct === 0);
 }
 
+// ---- Test 8: Freiwilliges Aufdecken nach Fold-Sieg (revealOwn) ----
+{
+  const t = new Table(players(3), { flush: false });
+  t.startHand();
+  assert('Show vor handover -> Fehler', !!t.revealOwn('P0').error);
+  // Alle bis auf einen folden.
+  let guard = 0;
+  while (t.stage !== 'handover' && guard++ < 20) t.act(t.players[t.toAct].id, 'fold');
+  assert('Fold-Sieg erreicht handover', t.stage === 'handover' && t.result.reason === 'fold');
+
+  const winnerIdx = t.players.findIndex((p) => !p.folded);
+  const winnerId = t.players[winnerIdx].id;
+  const folderId = t.players.find((p) => p.folded).id;
+
+  assert('Gefoldeter darf nicht zeigen', !!t.revealOwn(folderId).error);
+  // Vor dem Zeigen sieht ein Mitspieler die Gewinnerkarten verdeckt.
+  assert(
+    'Vor Show: Karten verdeckt',
+    t.view('P_none').players[winnerIdx].hole.every((h) => h === null) ||
+      t.view(folderId).players[winnerIdx].hole.every((h) => h === null)
+  );
+  assert('Show erfolgreich', !!t.revealOwn(winnerId).ok);
+  // Danach sieht jeder andere die zwei Karten.
+  const seen = t.view(folderId).players[winnerIdx].hole.filter((h) => h).length;
+  assert('Nach Show: 2 Karten sichtbar', seen === 2);
+  assert('view.shown enthaelt Sieger', t.view(folderId).shown.includes(winnerIdx));
+  assert('Show-Log-Event vorhanden', t.log.some((e) => e.key === 'shown'));
+  // Idempotent.
+  t.revealOwn(winnerId);
+  assert('Show idempotent', t.shownCards.size === 1);
+}
+
 console.log(`\n${pass} bestanden, ${fail} fehlgeschlagen`);
 process.exit(fail === 0 ? 0 : 1);

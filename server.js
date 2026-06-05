@@ -176,6 +176,16 @@ io.on('connection', (socket) => {
     broadcast(room);
   });
 
+  socket.on('showCards', () => {
+    const room = rooms.get(socket.data.code);
+    if (!room?.table) return;
+    const seat = seatBySocket(room, socket.id);
+    if (!seat) return;
+    const res = room.table.revealOwn(seat.token);
+    if (res?.error) socket.emit('errorMsg', res.error);
+    broadcast(room);
+  });
+
   socket.on('action', ({ type, amount }) => {
     const room = rooms.get(socket.data.code);
     if (!room?.table) return;

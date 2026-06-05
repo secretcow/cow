@@ -55,6 +55,7 @@ export class Table {
     this.result = null;
     this.matchOver = false;
     this.matchWinnerId = null;
+    this.shownCards = new Set(); // Sitze, die nach Fold-Sieg freiwillig aufgedeckt haben
   }
 
   // Strukturiertes Log-Event: { key, ...params }. Die Uebersetzung passiert im Client,
@@ -89,6 +90,7 @@ export class Table {
     this.result = null;
     this.matchOver = false;
     this.matchWinnerId = null;
+    this.shownCards = new Set();
     this.log = [];
     this.addLog({ key: 'rematch' });
     return { ok: true };
@@ -145,6 +147,7 @@ export class Table {
     this.minRaise = BIG_BLIND;
     this.result = null;
     this.actedSinceRaise = new Set();
+    this.shownCards = new Set();
 
     for (const p of this.players) {
       p.hole = [];
@@ -305,6 +308,31 @@ export class Table {
   endByFold() {
     const winner = this.players.findIndex((p) => !p.folded);
     this.distribute('fold', null, [winner]);
+    return { ok: true };
+  }
+
+  // Freiwilliges Aufdecken: Nach einem Fold-Sieg darf der verbliebene Spieler
+  // seine Karten zeigen (klassisches "Show"). Wird an alle gebroadcastet.
+  revealOwn(playerId) {
+    if (this.stage !== 'handover' || this.result?.reason !== 'fold')
+      return { error: 'Zeigen jetzt nicht moeglich.' };
+    const i = this.players.findIndex((p) => p.id === playerId);
+    if (i < 0) return { error: 'Unbekannter Spieler.' };
+    if (this.players[i].folded)
+      return { error: 'Gefoldete Karten koennen nicht gezeigt werden.' };
+    if (this.shownCards.has(i)) return { ok: true };
+    this.shownCards.add(i);
+
+    // Wertung nur berechnen, wenn genug Karten fuer eine 5-Karten-Hand vorliegen
+    // (bei einem Preflop-Fold fehlt das Board, dann zeigen wir nur die Karten).
+    let ev = null;
+    if (this.players[i].hole.length + this.community.length >= 5)
+      ev = evaluate([...this.players[i].hole, ...this.community], { flush: this.flush });
+    if (!this.result.reveal) this.result.reveal = [];
+    if (!this.result.reveal.find((r) => r.i === i))
+      this.result.reveal.push({ i, hole: this.players[i].hole, eval: ev, folded: false });
+
+    this.addLog({ key: 'shown', name: this.players[i].name });
     return { ok: true };
   }
 
@@ -515,7 +543,9 @@ export class Table {
     const mkPlayer = (p, i) => {
       const isMe = i === meIdx;
       const revealHole =
-        isMe || (showAll && !p.folded && this.result?.reason === 'showdown');
+        isMe ||
+        (showAll && !p.folded && this.result?.reason === 'showdown') ||
+        (showAll && this.shownCards.has(i));
       return {
         id: p.id,
         name: p.name,
@@ -572,6 +602,7 @@ export class Table {
             }
           : null,
       result: this.result,
+      shown: [...this.shownCards],
       log: this.log,
       matchOver: this.matchOver,
       matchWinnerId: this.matchWinnerId,

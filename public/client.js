@@ -84,6 +84,7 @@ const I18N = {
     raiseDo: 'Erhöhen',
     firstHand: 'Erste Hand starten',
     nextHand: 'Nächste Hand',
+    showCards: '🃏 Karten zeigen',
     rematch: 'Revanche',
     matchWon: '🏆 Du hast das Match gewonnen!',
     matchLost: '😿 Match verloren.',
@@ -101,6 +102,7 @@ const I18N = {
       raise: (e) => `${e.name} erhöht auf ${e.to}.${e.allIn ? ' All-In!' : ''}`,
       community: (e) => `${streetName('de', e.street)}: ${e.cards.map((c) => cardWords('de', c)).join(', ')}`,
       winFold: (e) => `${e.name} gewinnt den Pot (${e.pot}) — alle anderen ausgestiegen.`,
+      shown: (e) => `${e.name} zeigt die Karten.`,
       win: (e) => `${e.name} gewinnt ${e.amount}${e.cat ? ` mit ${catName('de', e.cat, e.flush)}` : ''}.`,
       matchOver: (e) => `Match beendet — ${e.name} gewinnt!`,
       rematch: () => 'Revanche! Neue Stacks, neues Glück.',
@@ -165,6 +167,7 @@ const I18N = {
     raiseDo: 'Raise',
     firstHand: 'Start first hand',
     nextHand: 'Next hand',
+    showCards: '🃏 Show cards',
     rematch: 'Rematch',
     matchWon: '🏆 You won the match!',
     matchLost: '😿 Match lost.',
@@ -181,6 +184,7 @@ const I18N = {
       raise: (e) => `${e.name} raises to ${e.to}.${e.allIn ? ' All-In!' : ''}`,
       community: (e) => `${streetName('en', e.street)}: ${e.cards.map((c) => cardWords('en', c)).join(', ')}`,
       winFold: (e) => `${e.name} wins the pot (${e.pot}) — everyone else folded.`,
+      shown: (e) => `${e.name} shows their cards.`,
       win: (e) => `${e.name} wins ${e.amount}${e.cat ? ` with ${catName('en', e.cat, e.flush)}` : ''}.`,
       matchOver: (e) => `Match over — ${e.name} wins!`,
       rematch: () => 'Rematch! Fresh stacks, fresh luck.',
@@ -442,6 +446,7 @@ let prevStage = null;
 let prevYourTurn = false;
 let prevPot = 0;
 let newCardKeys = new Set();
+let revealedSeen = new Set(); // bereits animierte Gegnerkarten (Schluessel "seat:rank-copy")
 
 // Sitz-Positionen (Prozent) je Anzahl Gegner. "Ich" bin immer unten Mitte.
 const OPP_SLOTS = {
@@ -484,7 +489,26 @@ function render(s) {
     }
   }
 
-  renderSeats(s, handChanged);
+  // Neu aufgedeckte Gegnerkarten bestimmen (Showdown ODER freiwilliges Zeigen) —
+  // diese bekommen eine langsamere Flip-Animation, gestaffelt nacheinander.
+  if (handChanged) revealedSeen = new Set();
+  const revealAnim = new Map();
+  if (s.stage === 'showdown' || s.stage === 'handover') {
+    let ri = 0;
+    for (const p of s.players) {
+      if (p.seat === s.meIdx || p.folded) continue;
+      for (const c of p.hole || []) {
+        if (!c) continue;
+        const key = `${p.seat}:${c.rank}-${c.copy}`;
+        if (!revealedSeen.has(key)) {
+          revealAnim.set(key, ri++);
+          revealedSeen.add(key);
+        }
+      }
+    }
+  }
+
+  renderSeats(s, handChanged, revealAnim);
   renderCommunity(s);
 
   $('pot').textContent = t('pot', s.pot);
@@ -513,7 +537,7 @@ function render(s) {
   prevPot = s.pot;
 }
 
-function renderSeats(s, animate) {
+function renderSeats(s, animate, revealAnim) {
   const container = $('seats');
   container.innerHTML = '';
   const n = s.players.length;
@@ -526,21 +550,21 @@ function renderSeats(s, animate) {
 
   opps.forEach((p, idx) => {
     const [x, y] = slots[idx];
-    const seat = buildSeat(s, p, false, animate);
+    const seat = buildSeat(s, p, false, animate, revealAnim);
     seat.style.left = `${x}%`;
     seat.style.top = `${y}%`;
     container.appendChild(seat);
   });
 
   // Ich unten Mitte
-  const meSeat = buildSeat(s, s.players[meIdx], true, animate);
+  const meSeat = buildSeat(s, s.players[meIdx], true, animate, revealAnim);
   meSeat.style.left = '50%';
   meSeat.style.bottom = '2%';
   meSeat.classList.add('seat-bottom');
   container.appendChild(meSeat);
 }
 
-function buildSeat(s, p, isMe, animate) {
+function buildSeat(s, p, isMe, animate, revealAnim) {
   const seat = document.createElement('div');
   seat.className = 'seat';
   if (isMe) seat.classList.add('me');
@@ -557,7 +581,12 @@ function buildSeat(s, p, isMe, animate) {
   cards.forEach((c, i) => {
     const el = cardEl(c);
     if (c && usedSet.has(`${c.rank}-${c.copy}`)) el.classList.add('used');
-    if (animate) {
+    const revKey = c ? `${p.seat}:${c.rank}-${c.copy}` : null;
+    if (revKey && revealAnim && revealAnim.has(revKey)) {
+      // Langsameres Aufdecken (Flip), gestaffelt.
+      el.classList.add('revealing');
+      el.style.animationDelay = `${revealAnim.get(revKey) * 0.18}s`;
+    } else if (animate) {
       el.classList.add('dealing');
       el.style.animationDelay = `${i * 0.1}s`;
     }
@@ -650,6 +679,18 @@ function renderControls(s, me) {
   const raisePanel = $('raisePanel');
   const nextBtn = $('nextHandBtn');
   const matchOver = $('matchOver');
+  const showBtn = $('showCardsBtn');
+
+  // "Karten zeigen" nur nach einem Fold-Sieg fuer den Gewinner, der noch nicht gezeigt hat.
+  const canShow =
+    !s.matchOver &&
+    s.stage === 'handover' &&
+    s.result?.reason === 'fold' &&
+    s.result.winners.includes(s.meIdx) &&
+    !me.folded &&
+    !(s.shown || []).includes(s.meIdx);
+  showBtn.classList.toggle('hidden', !canShow);
+  if (canShow) showBtn.textContent = t('showCards');
 
   if (s.matchOver) {
     matchOver.classList.remove('hidden');
@@ -711,14 +752,27 @@ function renderControls(s, me) {
 function setupRaise(a) {
   const slider = $('raiseSlider');
   const amount = $('raiseAmount');
+  const span = Math.max(0, a.maxRaiseTo - a.minRaiseTo);
+  const step = Math.max(1, Math.round(span / 10)); // Barometer in ~10 Stufen
   slider.min = a.minRaiseTo;
   slider.max = a.maxRaiseTo;
+  slider.step = step;
   amount.min = a.minRaiseTo;
   amount.max = a.maxRaiseTo;
+  amount.step = 1; // Eingabefeld erlaubt jeden Wert
   if (!amount.value || +amount.value < a.minRaiseTo || +amount.value > a.maxRaiseTo) {
     amount.value = a.minRaiseTo;
     slider.value = a.minRaiseTo;
   }
+}
+
+// Tippeingabe auf den gueltigen Bereich begrenzen.
+function clampRaise(v) {
+  const a = lastState?.actions;
+  let n = Math.round(Number(v));
+  if (!Number.isFinite(n)) n = a ? a.minRaiseTo : 0;
+  if (a) n = Math.max(a.minRaiseTo, Math.min(a.maxRaiseTo, n));
+  return n;
 }
 
 function renderLog(log) {
@@ -746,7 +800,7 @@ $('actionButtons').addEventListener('click', (e) => {
   socket.emit('action', { type: act });
 });
 $('raiseConfirm').onclick = () => {
-  socket.emit('action', { type: 'raise', amount: +$('raiseAmount').value });
+  socket.emit('action', { type: 'raise', amount: clampRaise($('raiseAmount').value) });
   raiseOpen = false;
 };
 $('raiseCancel').onclick = () => {
@@ -755,6 +809,18 @@ $('raiseCancel').onclick = () => {
 };
 $('raiseSlider').oninput = (e) => { $('raiseAmount').value = e.target.value; };
 $('raiseAmount').oninput = (e) => { $('raiseSlider').value = e.target.value; };
+// Beim Verlassen des Feldes auf den gueltigen Bereich begrenzen, Enter bestaetigt.
+$('raiseAmount').onchange = () => {
+  const v = clampRaise($('raiseAmount').value);
+  $('raiseAmount').value = v;
+  $('raiseSlider').value = v;
+};
+$('raiseAmount').onkeydown = (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    $('raiseConfirm').click();
+  }
+};
 document.querySelectorAll('[data-quick]').forEach((b) => {
   b.onclick = () => {
     const a = lastState.actions;
@@ -767,6 +833,7 @@ document.querySelectorAll('[data-quick]').forEach((b) => {
   };
 });
 $('nextHandBtn').onclick = () => socket.emit('startHand');
+$('showCardsBtn').onclick = () => socket.emit('showCards');
 $('rematchBtn').onclick = () => socket.emit('rematch');
 
 // ---------- Toast ----------
