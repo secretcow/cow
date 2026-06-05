@@ -10,45 +10,58 @@
     <!-- ============ LOBBY ============ -->
     <div id="lobby" class="screen">
       <div class="lobby-card">
-        <h1>🐄 KuhPoker</h1>
-        <p class="subtitle">Texas Hold'em mit Kuhhandel-Tierkarten</p>
+        <div class="lang-switch" id="langSwitch">
+          <button class="lang-btn" data-lang="de">DE</button>
+          <button class="lang-btn" data-lang="en">EN</button>
+        </div>
+        <h1 class="logo">🐄 KuhPoker</h1>
+        <p class="subtitle" data-i18n="subtitle"></p>
 
-        <label>Dein Name</label>
-        <input id="nameInput" maxlength="16" placeholder="z. B. Anna" />
+        <label data-i18n="yourName"></label>
+        <input id="nameInput" maxlength="16" />
 
         <div class="lobby-actions">
-          <button id="createBtn" class="btn primary">Neuen Tisch erstellen</button>
-          <div class="or">oder</div>
+          <div class="create-box">
+            <div class="opt-row">
+              <span data-i18n="maxPlayers"></span>
+              <div class="seg" id="maxPlayersSeg">
+                <button data-val="2">2</button>
+                <button data-val="3">3</button>
+                <button data-val="4">4</button>
+                <button data-val="5">5</button>
+                <button data-val="6" class="active">6</button>
+              </div>
+            </div>
+            <div class="opt-row">
+              <span data-i18n="flushMode"></span>
+              <div class="seg" id="flushSeg">
+                <button data-val="off" class="active" data-i18n="off"></button>
+                <button data-val="on" data-i18n="on"></button>
+              </div>
+            </div>
+            <p class="opt-hint" id="flushHint" data-i18n="flushHint"></p>
+            <button id="createBtn" class="btn primary" data-i18n="createTable"></button>
+          </div>
+
+          <div class="or" data-i18n="or"></div>
           <div class="join-row">
-            <input id="codeInput" maxlength="4" placeholder="CODE" class="code-input" />
-            <button id="joinBtn" class="btn">Beitreten</button>
+            <input id="codeInput" maxlength="4" class="code-input" />
+            <button id="joinBtn" class="btn" data-i18n="join"></button>
           </div>
         </div>
 
         <div id="waiting" class="waiting hidden">
-          <p>Tisch-Code zum Teilen:</p>
+          <p data-i18n="shareCode"></p>
           <div id="roomCode" class="room-code"></div>
-          <button id="copyLinkBtn" class="btn small">Einladungslink kopieren</button>
-          <p class="hint" id="waitHint">Warte auf zweiten Spieler …</p>
+          <button id="copyLinkBtn" class="btn small" data-i18n="copyLink"></button>
+          <div class="player-list" id="lobbyPlayers"></div>
+          <button id="startGameBtn" class="btn primary hidden" data-i18n="startGame"></button>
+          <p class="hint" id="waitHint"></p>
         </div>
 
         <details class="rules">
-          <summary>Spielregeln</summary>
-          <p>
-            10 Tiere mit Werten von Hahn (10) bis Pferd (1000), je 4-mal im Deck.
-            Jeder bekommt 2 Handkarten, dann Flop (3), Turn (1), River (1).
-            Beste 5 aus 7 Karten gewinnt.
-          </p>
-          <p><strong>Da es keine Farben gibt, gibt es keinen Flush.</strong> Rangfolge:</p>
-          <ol class="ranking">
-            <li>Vierling</li>
-            <li>Full House</li>
-            <li>Straße (5 Werte in Folge; das Pferd zählt wie ein Ass auch tief: Pferd-Hahn-Gans-Katze-Hund)</li>
-            <li>Drilling</li>
-            <li>Zwei Paare</li>
-            <li>Paar</li>
-            <li>Hohe Karte</li>
-          </ol>
+          <summary data-i18n="rulesSummary"></summary>
+          <div id="rulesBody"></div>
         </details>
       </div>
     </div>
@@ -58,39 +71,19 @@
       <div class="topbar">
         <span class="conn" id="connStatus"></span>
         <span class="topcode" id="topCode"></span>
-        <button id="muteBtn" class="btn small" title="Ton an/aus">🔊</button>
-      </div>
-      <div class="table">
-        <!-- Gegner -->
-        <div class="seat seat-opp">
-          <div class="seat-info">
-            <span class="pname" id="oppName">Gegner</span>
-            <span class="badge button-badge hidden" id="oppBtn">D</span>
-            <span class="stack" id="oppStack">0</span>
-          </div>
-          <div class="hole" id="oppHole"></div>
-          <div class="bet-chip hidden" id="oppBet"></div>
-          <div class="hand-label hidden" id="oppHandLabel"></div>
+        <div class="top-actions">
+          <button class="lang-btn small-lang" id="gameLangBtn">DE</button>
+          <button id="muteBtn" class="btn small" title="Ton">🔊</button>
         </div>
+      </div>
 
-        <!-- Mitte -->
+      <div class="table">
+        <div class="seats" id="seats"></div>
         <div class="center">
-          <div class="pot" id="pot">Pot: 0</div>
+          <div class="pot" id="pot"></div>
           <div class="community" id="community"></div>
           <div class="stage-label" id="stageLabel"></div>
           <div class="result-banner hidden" id="resultBanner"></div>
-        </div>
-
-        <!-- Ich -->
-        <div class="seat seat-me">
-          <div class="bet-chip hidden" id="meBet"></div>
-          <div class="hole" id="meHole"></div>
-          <div class="hand-label hidden" id="meHandLabel"></div>
-          <div class="seat-info">
-            <span class="pname" id="meName">Du</span>
-            <span class="badge button-badge hidden" id="meBtn">D</span>
-            <span class="stack" id="meStack">0</span>
-          </div>
         </div>
       </div>
 
@@ -98,27 +91,27 @@
       <div class="controls" id="controls">
         <div class="turn-indicator" id="turnIndicator"></div>
         <div class="action-buttons hidden" id="actionButtons">
-          <button class="btn act" data-act="fold">Fold</button>
-          <button class="btn act" id="checkCallBtn" data-act="call">Call</button>
-          <button class="btn act primary" id="raiseBtn" data-act="raise">Raise</button>
+          <button class="btn act" data-act="fold" id="foldBtn"></button>
+          <button class="btn act" id="checkCallBtn" data-act="call"></button>
+          <button class="btn act primary" id="raiseBtn" data-act="raise"></button>
         </div>
         <div class="raise-panel hidden" id="raisePanel">
           <input type="range" id="raiseSlider" />
           <div class="raise-row">
             <input type="number" id="raiseAmount" />
-            <button class="btn small" data-quick="min">Min</button>
-            <button class="btn small" data-quick="pot">Pot</button>
-            <button class="btn small" data-quick="max">All-In</button>
+            <button class="btn small" data-quick="min" data-i18n="min"></button>
+            <button class="btn small" data-quick="pot" data-i18n="potBtn"></button>
+            <button class="btn small" data-quick="max" data-i18n="allIn"></button>
           </div>
           <div class="raise-confirm">
-            <button class="btn" id="raiseCancel">Zurück</button>
-            <button class="btn primary" id="raiseConfirm">Erhöhen</button>
+            <button class="btn" id="raiseCancel" data-i18n="back"></button>
+            <button class="btn primary" id="raiseConfirm" data-i18n="raiseDo"></button>
           </div>
         </div>
-        <button class="btn primary big hidden" id="nextHandBtn">Nächste Hand</button>
+        <button class="btn primary big hidden" id="nextHandBtn"></button>
         <div class="match-over hidden" id="matchOver">
           <div id="matchOverText"></div>
-          <button class="btn primary big" id="rematchBtn">Revanche</button>
+          <button class="btn primary big" id="rematchBtn" data-i18n="rematch"></button>
         </div>
       </div>
 

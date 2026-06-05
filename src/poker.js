@@ -1,7 +1,10 @@
-// Heads-up Texas Hold'em Engine (2 Spieler) mit Kuhhandel-Tierkarten.
+// Texas Hold'em Engine fuer 2-6 Spieler mit Kuhhandel-Tierkarten.
 // Autoritativer Spielzustand. Clients schicken nur Aktionen, der Server validiert alles.
+//
+// Unterstuetzt Button-/Blind-Rotation, korrekte Setzreihenfolge und Side Pots
+// (mehrere All-Ins auf unterschiedlichen Hoehen). Optionaler Flush-Modus.
 
-import { buildDeck, shuffle, animalByRank } from './cards.js';
+import { buildDeck, shuffle } from './cards.js';
 import { evaluate, compareScores } from './handEval.js';
 
 export const STARTING_STACK = 1000;
@@ -9,9 +12,22 @@ export const SMALL_BLIND = 10;
 export const BIG_BLIND = 20;
 
 export class Table {
-  constructor(p0, p1) {
-    // p0, p1: { id, name }
-    this.players = [p0, p1].map((p) => ({
+  // Aufruf:
+  //   new Table([{id,name}, ...], { flush })   // 2-6 Spieler
+  //   new Table({id,name}, {id,name})          // Rueckwaerts-kompatibel (Heads-up)
+  constructor(playersOrP0, p1OrOptions, options) {
+    let playerDefs;
+    let opts;
+    if (Array.isArray(playersOrP0)) {
+      playerDefs = playersOrP0;
+      opts = p1OrOptions || {};
+    } else {
+      playerDefs = [playersOrP0, p1OrOptions];
+      opts = options || {};
+    }
+
+    this.flush = !!opts.flush;
+    this.players = playerDefs.map((p) => ({
       id: p.id,
       name: p.name,
       stack: STARTING_STACK,
@@ -20,29 +36,34 @@ export class Table {
       committed: 0, // Einsatz insgesamt in dieser Hand
       folded: false,
       allIn: false,
+      inHand: false,
     }));
-    this.button = 1; // wird beim ersten startHand auf 0 rotiert
+    this.n = this.players.length;
+    this.button = this.n - 1; // erstes startHand rotiert auf 0
     this.handNo = 0;
     this.stage = 'idle'; // idle | preflop | flop | turn | river | showdown | handover
     this.community = [];
     this.deck = [];
-    this.pot = 0;
+    this.pot = 0; // Gesamteinsatz dieser Hand (inkl. aktueller Bets)
     this.currentBet = 0;
     this.minRaise = BIG_BLIND;
     this.toAct = null;
     this.actedSinceRaise = new Set();
+    this.sbPos = null;
+    this.bbPos = null;
     this.log = [];
-    this.result = null; // Showdown-/Fold-Ergebnis
+    this.result = null;
     this.matchOver = false;
     this.matchWinnerId = null;
   }
 
-  addLog(msg) {
-    this.log.push(msg);
-    if (this.log.length > 30) this.log.shift();
+  // Strukturiertes Log-Event: { key, ...params }. Die Uebersetzung passiert im Client,
+  // damit jeder Spieler das Log in seiner Sprache sieht.
+  addLog(event) {
+    this.log.push(event);
+    if (this.log.length > 40) this.log.shift();
   }
 
-  // Revanche: Stacks zuruecksetzen, neues Match.
   resetMatch() {
     for (const p of this.players) {
       p.stack = STARTING_STACK;
@@ -51,8 +72,9 @@ export class Table {
       p.committed = 0;
       p.folded = false;
       p.allIn = false;
+      p.inHand = false;
     }
-    this.button = 1;
+    this.button = this.n - 1;
     this.handNo = 0;
     this.stage = 'idle';
     this.community = [];
@@ -62,16 +84,48 @@ export class Table {
     this.minRaise = BIG_BLIND;
     this.toAct = null;
     this.actedSinceRaise = new Set();
+    this.sbPos = null;
+    this.bbPos = null;
     this.result = null;
     this.matchOver = false;
     this.matchWinnerId = null;
     this.log = [];
-    this.addLog('Revanche! Neue Stacks, neues Glueck.');
+    this.addLog({ key: 'rematch' });
     return { ok: true };
   }
 
-  other(i) {
-    return i === 0 ? 1 : 0;
+  // ---- Index-Helfer (rund um den Tisch) ----
+  // Naechster Sitz nach `from`, dessen Spieler noch Chips hat (fuer Button/Blinds).
+  nextLive(from) {
+    for (let k = 1; k <= this.n; k++) {
+      const idx = (from + k) % this.n;
+      if (this.players[idx].stack > 0) return idx;
+    }
+    return from;
+  }
+
+  // Erster handlungsfaehiger Spieler ab `start` (inklusive): in der Hand und nicht All-In.
+  firstActorFrom(start) {
+    for (let k = 0; k < this.n; k++) {
+      const idx = (start + k) % this.n;
+      const p = this.players[idx];
+      if (!p.folded && !p.allIn && p.inHand) return idx;
+    }
+    return null;
+  }
+
+  // Naechster handlungsfaehiger Spieler nach `from` (exklusiv).
+  nextToAct(from) {
+    for (let k = 1; k <= this.n; k++) {
+      const idx = (from + k) % this.n;
+      const p = this.players[idx];
+      if (!p.folded && !p.allIn && p.inHand) return idx;
+    }
+    return null;
+  }
+
+  liveCount() {
+    return this.players.filter((p) => p.stack > 0).length;
   }
 
   // ---- Hand starten ----
@@ -79,11 +133,11 @@ export class Table {
     if (this.matchOver) return { error: 'Match ist beendet.' };
     if (this.stage !== 'idle' && this.stage !== 'handover')
       return { error: 'Hand laeuft noch.' };
-    if (this.players.some((p) => p.stack <= 0))
-      return { error: 'Ein Spieler hat keine Chips mehr.' };
+    if (this.liveCount() < 2)
+      return { error: 'Mindestens zwei Spieler mit Chips noetig.' };
 
     this.handNo++;
-    this.button = this.other(this.button);
+    this.button = this.nextLive(this.button);
     this.deck = shuffle(buildDeck());
     this.community = [];
     this.pot = 0;
@@ -93,26 +147,54 @@ export class Table {
     this.actedSinceRaise = new Set();
 
     for (const p of this.players) {
-      p.hole = [this.deck.pop(), this.deck.pop()];
+      p.hole = [];
       p.bet = 0;
       p.committed = 0;
-      p.folded = false;
       p.allIn = false;
+      p.inHand = p.stack > 0;
+      p.folded = !p.inHand; // Spieler ohne Chips sitzen aus
     }
 
-    // Blinds: Button = Small Blind, Gegner = Big Blind (Heads-up)
-    const sb = this.button;
-    const bb = this.other(this.button);
-    this.postBlind(sb, SMALL_BLIND);
-    this.postBlind(bb, BIG_BLIND);
+    // Karten austeilen (nur aktive Spieler), beginnend links vom Button.
+    const order = [];
+    for (let k = 1; k <= this.n; k++) order.push((this.button + k) % this.n);
+    for (let round = 0; round < 2; round++) {
+      for (const idx of order) {
+        if (this.players[idx].inHand) this.players[idx].hole.push(this.deck.pop());
+      }
+    }
+
+    const liveIdx = this.players
+      .map((p, i) => ({ p, i }))
+      .filter((x) => x.p.stack > 0)
+      .map((x) => x.i);
+
+    let firstToAct;
+    if (liveIdx.length === 2) {
+      // Heads-up: Button ist Small Blind und handelt praeflop zuerst.
+      this.sbPos = this.button;
+      this.bbPos = this.nextLive(this.button);
+      firstToAct = this.sbPos;
+    } else {
+      this.sbPos = this.nextLive(this.button);
+      this.bbPos = this.nextLive(this.sbPos);
+      firstToAct = this.nextLive(this.bbPos); // UTG
+    }
+
+    this.postBlind(this.sbPos, SMALL_BLIND);
+    this.postBlind(this.bbPos, BIG_BLIND);
     this.currentBet = BIG_BLIND;
     this.minRaise = BIG_BLIND;
 
     this.stage = 'preflop';
-    // Praeflop handelt der Button (Small Blind) zuerst.
-    this.toAct = sb;
-    this.addLog(`— Hand ${this.handNo} — ${this.players[sb].name} ist Button/Small Blind.`);
+    this.addLog({ key: 'handStart', hand: this.handNo, name: this.players[this.button].name });
     this.syncPot();
+
+    // Erster handlungsfaehiger Spieler (ueberspringt evtl. All-In durch kurze Blinds).
+    this.toAct = this.firstActorFrom(firstToAct);
+    if (this.toAct === null || this.isBettingClosed()) {
+      this.proceedAfterBetting();
+    }
     return { ok: true };
   }
 
@@ -130,7 +212,6 @@ export class Table {
   }
 
   // ---- Aktion verarbeiten ----
-  // type: 'fold' | 'check' | 'call' | 'raise'  (raise: amount = Ziel-Gesamteinsatz dieser Runde)
   act(playerId, type, amount) {
     if (this.stage === 'idle' || this.stage === 'handover' || this.stage === 'showdown')
       return { error: 'Keine aktive Setzrunde.' };
@@ -144,20 +225,24 @@ export class Table {
     switch (type) {
       case 'fold': {
         p.folded = true;
-        this.addLog(`${p.name} steigt aus (Fold).`);
-        return this.endByFold();
+        p.inHand = false;
+        this.addLog({ key: 'fold', name: p.name });
+        const remaining = this.players.filter((x) => !x.folded);
+        if (remaining.length === 1) {
+          return this.endByFold();
+        }
+        break;
       }
       case 'check': {
         if (toCall > 0) return { error: 'Check nicht moeglich, es liegt ein Einsatz an.' };
         this.actedSinceRaise.add(i);
-        this.addLog(`${p.name} checkt.`);
+        this.addLog({ key: 'check', name: p.name });
         break;
       }
       case 'call': {
         if (toCall <= 0) {
-          // wie Check behandeln
           this.actedSinceRaise.add(i);
-          this.addLog(`${p.name} checkt.`);
+          this.addLog({ key: 'check', name: p.name });
           break;
         }
         const pay = Math.min(toCall, p.stack);
@@ -166,7 +251,7 @@ export class Table {
         p.committed += pay;
         if (p.stack === 0) p.allIn = true;
         this.actedSinceRaise.add(i);
-        this.addLog(`${p.name} geht mit (${pay}).${p.allIn ? ' All-In!' : ''}`);
+        this.addLog({ key: 'call', name: p.name, amount: pay, allIn: p.allIn });
         break;
       }
       case 'raise': {
@@ -179,7 +264,8 @@ export class Table {
         const isAllIn = raiseTo === maxTo;
         if (raiseTo < minTo && !isAllIn)
           return { error: `Mindestens auf ${minTo} erhoehen.` };
-        if (raiseTo <= this.currentBet) return { error: 'Erhoehung muss ueber dem aktuellen Einsatz liegen.' };
+        if (raiseTo <= this.currentBet)
+          return { error: 'Erhoehung muss ueber dem aktuellen Einsatz liegen.' };
 
         const pay = raiseTo - p.bet;
         const prevBet = this.currentBet;
@@ -187,10 +273,17 @@ export class Table {
         p.bet = raiseTo;
         p.committed += pay;
         if (p.stack === 0) p.allIn = true;
-        this.minRaise = Math.max(this.minRaise, raiseTo - prevBet);
+        // Eine echte (volle) Erhoehung setzt minRaise neu und oeffnet die Runde.
+        const raiseSize = raiseTo - prevBet;
+        if (raiseSize >= this.minRaise) {
+          this.minRaise = raiseSize;
+          this.actedSinceRaise = new Set([i]);
+        } else {
+          // Unter-Minimum (nur per All-In moeglich): eroeffnet die Runde nicht neu.
+          this.actedSinceRaise.add(i);
+        }
         this.currentBet = raiseTo;
-        this.actedSinceRaise = new Set([i]);
-        this.addLog(`${p.name} erhoeht auf ${raiseTo}.${p.allIn ? ' All-In!' : ''}`);
+        this.addLog({ key: 'raise', name: p.name, to: raiseTo, allIn: p.allIn });
         break;
       }
       default:
@@ -202,36 +295,36 @@ export class Table {
     if (this.isBettingClosed()) {
       this.proceedAfterBetting();
     } else {
-      this.toAct = this.nextToAct(i);
+      const nxt = this.nextToAct(i);
+      if (nxt === null) this.proceedAfterBetting();
+      else this.toAct = nxt;
     }
     return { ok: true };
   }
 
   endByFold() {
     const winner = this.players.findIndex((p) => !p.folded);
-    this.distribute([winner], 'fold');
+    this.distribute('fold', null, [winner]);
     return { ok: true };
-  }
-
-  nextToAct(fromIndex) {
-    const j = this.other(fromIndex);
-    const p = this.players[j];
-    if (p.folded || p.allIn) return fromIndex; // sollte hier nicht vorkommen
-    return j;
   }
 
   isBettingClosed() {
     const inHand = this.players.filter((p) => !p.folded);
+    if (inHand.length <= 1) return true;
     const matched = inHand.every((p) => p.allIn || p.bet === this.currentBet);
     if (!matched) return false;
     const canAct = inHand.filter((p) => !p.allIn);
-    if (canAct.length <= 1) return true;
+    if (canAct.length <= 1) {
+      // Nur einer (oder keiner) kann noch handeln: Runde ist zu, sobald er gehandelt hat
+      // bzw. nichts zu callen ist.
+      if (canAct.length === 0) return true;
+      const onlyOne = canAct[0];
+      return this.actedSinceRaise.has(this.players.indexOf(onlyOne));
+    }
     return canAct.every((p) => this.actedSinceRaise.has(this.players.indexOf(p)));
   }
 
-  // Naechste Strasse aufdecken oder Showdown.
   proceedAfterBetting() {
-    // Einsaetze der Runde sind bereits in committed; bet zuruecksetzen.
     for (const p of this.players) p.bet = 0;
     this.currentBet = 0;
     this.minRaise = BIG_BLIND;
@@ -240,7 +333,6 @@ export class Table {
     const canActCount = () =>
       this.players.filter((p) => !p.folded && !p.allIn).length;
 
-    // Strassen nacheinander; wenn niemand mehr handeln kann, automatisch durchlaufen.
     while (true) {
       if (this.stage === 'preflop') {
         this.dealCommunity(3);
@@ -256,25 +348,19 @@ export class Table {
       }
 
       if (canActCount() >= 2) {
-        // Postflop handelt der Nicht-Button-Spieler zuerst.
-        const first = this.other(this.button);
-        this.toAct = this.players[first].folded || this.players[first].allIn
-          ? this.other(first)
-          : first;
-        return;
+        // Postflop handelt der erste aktive Spieler links vom Button.
+        this.toAct = this.firstActorFrom((this.button + 1) % this.n);
+        if (this.toAct !== null) return;
       }
-      // sonst: weiter zur naechsten Strasse (Auto-Run-out)
+      // sonst: Auto-Run-out zur naechsten Strasse
     }
   }
 
   dealCommunity(n) {
     for (let k = 0; k < n; k++) this.community.push(this.deck.pop());
-    const names = this.community
-      .slice(-n)
-      .map((c) => animalByRank(c.rank).name)
-      .join(', ');
-    const label = { 3: 'Flop', 1: this.stage === 'flop' ? 'Turn' : 'River' }[n] || 'Karten';
-    this.addLog(`${label}: ${names}`);
+    const street = n === 3 ? 'flop' : this.stage === 'flop' ? 'turn' : 'river';
+    const cards = this.community.slice(-n).map((c) => ({ rank: c.rank, suit: c.suit }));
+    this.addLog({ key: 'community', street, cards });
   }
 
   showdown() {
@@ -285,63 +371,121 @@ export class Table {
 
     const evals = contenders.map((x) => ({
       i: x.i,
-      eval: evaluate([...x.p.hole, ...this.community]),
+      eval: evaluate([...x.p.hole, ...this.community], { flush: this.flush }),
     }));
 
-    let best = evals[0];
-    for (const e of evals) if (compareScores(e.eval.score, best.eval.score) > 0) best = e;
-    const winners = evals
-      .filter((e) => compareScores(e.eval.score, best.eval.score) === 0)
-      .map((e) => e.i);
-
-    this.distribute(winners, 'showdown', evals);
+    this.distribute('showdown', evals, null);
     return { ok: true };
   }
 
-  distribute(winners, reason, evals = null) {
-    // Nicht mitgegangene Ueberzahl zurueckgeben (Heads-up: hoechster Einsatz ueber dem zweithoechsten).
-    const sorted = [...this.players].sort((a, b) => b.committed - a.committed);
-    const uncalled = sorted[0].committed - sorted[1].committed;
-    if (uncalled > 0) {
-      sorted[0].stack += uncalled;
-      sorted[0].committed -= uncalled;
-      this.addLog(`${sorted[0].name} bekommt ${uncalled} (nicht mitgegangen) zurueck.`);
-    }
-    this.syncPot();
-    const pot = this.pot;
-
-    const share = Math.floor(pot / winners.length);
-    let remainder = pot - share * winners.length;
-    for (const w of winners) {
-      let amt = share;
-      if (remainder > 0) {
-        amt += 1;
-        remainder -= 1;
+  // ---- Side-Pot-Verteilung ----
+  // Baut geschichtete Pots aus den committed-Betraegen aller Spieler.
+  buildSidePots() {
+    const remaining = this.players.map((p, i) => ({
+      i,
+      amount: p.committed,
+      folded: p.folded,
+    }));
+    const pots = [];
+    let carry = 0;
+    while (true) {
+      const positive = remaining.filter((c) => c.amount > 0);
+      if (positive.length === 0) break;
+      const min = Math.min(...positive.map((c) => c.amount));
+      let amount = 0;
+      const eligible = [];
+      for (const c of remaining) {
+        if (c.amount > 0) {
+          amount += min;
+          c.amount -= min;
+          if (!c.folded) eligible.push(c.i);
+        }
       }
-      this.players[w].stack += amt;
+      if (eligible.length === 0) {
+        carry += amount; // sollte praktisch nie auftreten
+        continue;
+      }
+      amount += carry;
+      carry = 0;
+      pots.push({ amount, eligible });
+    }
+    return pots;
+  }
+
+  distribute(reason, evals, foldWinners) {
+    const evalMap = new Map();
+    if (evals) for (const e of evals) evalMap.set(e.i, e.eval);
+
+    const pots = this.buildSidePots();
+    const winnings = new Map(); // i -> Gewinn
+
+    for (const pot of pots) {
+      let winners;
+      if (reason === 'fold') {
+        winners = foldWinners.filter((w) => pot.eligible.includes(w));
+        if (winners.length === 0) winners = pot.eligible;
+      } else {
+        let best = null;
+        for (const i of pot.eligible) {
+          const sc = evalMap.get(i).score;
+          if (!best || compareScores(sc, best) > 0) best = sc;
+        }
+        winners = pot.eligible.filter(
+          (i) => compareScores(evalMap.get(i).score, best) === 0
+        );
+      }
+
+      // Aufteilen, ungerade Chips an die ersten Sitze links vom Button.
+      const ordered = [...winners].sort(
+        (a, b) =>
+          ((a - this.button + this.n) % this.n) -
+          ((b - this.button + this.n) % this.n)
+      );
+      const share = Math.floor(pot.amount / winners.length);
+      let remainder = pot.amount - share * winners.length;
+      for (const w of ordered) {
+        let amt = share;
+        if (remainder > 0) {
+          amt += 1;
+          remainder -= 1;
+        }
+        this.players[w].stack += amt;
+        winnings.set(w, (winnings.get(w) || 0) + amt);
+      }
     }
 
-    const names = winners.map((w) => this.players[w].name).join(' & ');
+    const totalPot = this.players.reduce((s, p) => s + p.committed, 0);
+
+    // Log (strukturiert, Uebersetzung im Client)
     if (reason === 'fold') {
-      this.addLog(`${names} gewinnt den Pot (${pot}) — Gegner ausgestiegen.`);
+      const w = foldWinners[0];
+      this.addLog({ key: 'winFold', name: this.players[w].name, pot: totalPot });
     } else {
-      const handName = evals
-        ? evals.find((e) => e.i === winners[0]).eval.name
-        : '';
-      if (winners.length > 1) this.addLog(`Split Pot (${pot}) — ${handName}.`);
-      else this.addLog(`${names} gewinnt ${pot} mit ${handName}.`);
+      const winnerEntries = [...winnings.entries()].sort((a, b) => b[1] - a[1]);
+      for (const [i, amt] of winnerEntries) {
+        this.addLog({
+          key: 'win',
+          name: this.players[i].name,
+          amount: amt,
+          cat: evalMap.get(i)?.score?.[0] ?? null,
+          flush: this.flush,
+        });
+      }
     }
 
     this.result = {
       reason,
-      winners,
-      pot,
+      winners: [...winnings.keys()],
+      winnings: [...winnings.entries()].map(([i, amount]) => ({ i, amount })),
+      pot: totalPot,
+      pots: pots.map((p) => ({ amount: p.amount, eligible: p.eligible })),
       reveal:
         reason === 'showdown'
           ? this.players.map((p, i) => ({
               i,
               hole: p.hole,
-              eval: evals.find((e) => e.i === i)?.eval || null,
+              eval: evalMap.get(i) || null,
+              folded: p.folded,
             }))
           : null,
     };
@@ -354,23 +498,24 @@ export class Table {
     this.toAct = null;
     this.stage = 'handover';
 
-    // Match-Ende?
-    const broke = this.players.find((p) => p.stack <= 0);
-    if (broke) {
+    // Match-Ende? Nur noch ein Spieler mit Chips.
+    const withChips = this.players.filter((p) => p.stack > 0);
+    if (withChips.length <= 1) {
       this.matchOver = true;
-      this.matchWinnerId = this.players.find((p) => p.stack > 0).id;
-      this.addLog(`Match beendet — ${this.players.find((p) => p.stack > 0).name} gewinnt!`);
+      this.matchWinnerId = withChips[0]?.id || null;
+      if (withChips[0]) this.addLog({ key: 'matchOver', name: withChips[0].name });
     }
   }
 
-  // ---- Spieler-spezifische Sicht (versteckt gegnerische Handkarten) ----
+  // ---- Spieler-spezifische Sicht ----
   view(playerId) {
     const meIdx = this.players.findIndex((p) => p.id === playerId);
     const showAll = this.stage === 'showdown' || this.stage === 'handover';
 
     const mkPlayer = (p, i) => {
       const isMe = i === meIdx;
-      const revealHole = isMe || (showAll && !p.folded && this.result?.reason === 'showdown');
+      const revealHole =
+        isMe || (showAll && !p.folded && this.result?.reason === 'showdown');
       return {
         id: p.id,
         name: p.name,
@@ -379,38 +524,53 @@ export class Table {
         committed: p.committed,
         folded: p.folded,
         allIn: p.allIn,
+        inHand: p.inHand,
+        out: p.stack <= 0 && !p.inHand,
         isButton: i === this.button,
+        isSB: i === this.sbPos,
+        isBB: i === this.bbPos,
         isMe,
+        seat: i,
         hole: revealHole ? p.hole : p.hole.map(() => null),
       };
     };
 
-    const me = this.players[meIdx];
-    const toCall = this.toAct !== null ? this.currentBet - this.players[this.toAct].bet : 0;
-    const yourTurn = this.toAct === meIdx;
-    const minRaiseTo = Math.min(this.currentBet + this.minRaise, me ? me.bet + me.stack : 0);
+    const me = meIdx >= 0 ? this.players[meIdx] : null;
+    const toCall =
+      this.toAct !== null ? this.currentBet - this.players[this.toAct].bet : 0;
+    const yourTurn = this.toAct === meIdx && meIdx >= 0;
+    const minRaiseTo = me
+      ? Math.min(this.currentBet + this.minRaise, me.bet + me.stack)
+      : 0;
     const maxRaiseTo = me ? me.bet + me.stack : 0;
+
+    // Zentraler Pot = bereits eingesammelt (ohne aktuelle Bets, die als Chips davor liegen).
+    const collected = this.players.reduce((s, p) => s + (p.committed - p.bet), 0);
 
     return {
       handNo: this.handNo,
       stage: this.stage,
+      flush: this.flush,
       community: this.community,
-      pot: this.pot + this.players.reduce((s, p) => s + p.bet, 0),
+      pot: collected,
+      totalPot: this.players.reduce((s, p) => s + p.committed, 0),
       currentBet: this.currentBet,
       players: this.players.map(mkPlayer),
       meIdx,
+      button: this.button,
       toActId: this.toAct !== null ? this.players[this.toAct].id : null,
       yourTurn,
-      actions: yourTurn
-        ? {
-            canCheck: toCall <= 0,
-            canCall: toCall > 0,
-            toCall: Math.min(toCall, me.stack),
-            canRaise: me.stack > Math.max(0, toCall),
-            minRaiseTo,
-            maxRaiseTo,
-          }
-        : null,
+      actions:
+        yourTurn && me
+          ? {
+              canCheck: toCall <= 0,
+              canCall: toCall > 0,
+              toCall: Math.min(toCall, me.stack),
+              canRaise: me.stack > Math.max(0, toCall),
+              minRaiseTo,
+              maxRaiseTo,
+            }
+          : null,
       result: this.result,
       log: this.log,
       matchOver: this.matchOver,

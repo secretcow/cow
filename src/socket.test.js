@@ -10,7 +10,9 @@ function connect() {
   return new Promise((resolve) => {
     const s = io(URL, { forceNew: true, transports: ['websocket'] });
     s.latestState = null;
+    s.latestLobby = null;
     s.on('state', (st) => (s.latestState = st));
+    s.on('lobby', (lb) => (s.latestLobby = lb));
     s.on('connect', () => resolve(s));
   });
 }
@@ -29,8 +31,11 @@ async function main() {
 
   await new Promise((res) => b.emit('joinRoom', { code, name: 'Ben', token: tokenB }, () => res()));
   await wait(150);
-  assert('A hat State nach Join', !!a.latestState);
-  assert('B hat State nach Join', !!b.latestState);
+  assert('A hat Lobby nach Join', !!a.latestLobby);
+  assert('B hat Lobby nach Join', !!b.latestLobby);
+  assert('A ist Host', a.latestLobby.youAreHost === true);
+  assert('B ist nicht Host', b.latestLobby.youAreHost === false);
+  assert('Lobby kann starten (2 Spieler)', a.latestLobby.canStart === true);
 
   a.emit('startHand');
   await wait(150);

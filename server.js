@@ -36,12 +36,26 @@ function cleanName(name) {
   return n || 'Spieler';
 }
 
-function lobbyState(room) {
+function clampMaxPlayers(v) {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n)) return 6;
+  return Math.max(2, Math.min(6, n));
+}
+
+function lobbyState(room, forToken) {
+  const connectedCount = room.players.filter((p) => p.connected).length;
   return {
     code: room.code,
-    players: room.players.map((p) => ({ name: p.name, connected: p.connected })),
-    ready: room.players.length === 2 && room.players.every((p) => p.connected),
-    hasTable: !!room.table,
+    maxPlayers: room.maxPlayers,
+    flush: room.flush,
+    started: !!room.table,
+    players: room.players.map((p, i) => ({
+      name: p.name,
+      connected: p.connected,
+      isHost: i === 0,
+    })),
+    youAreHost: room.players[0]?.token === forToken,
+    canStart: !room.table && connectedCount >= 2,
   };
 }
 
@@ -49,7 +63,7 @@ function broadcast(room) {
   for (const p of room.players) {
     if (!p.connected) continue;
     if (room.table) io.to(p.socketId).emit('state', room.table.view(p.token));
-    io.to(p.socketId).emit('lobby', lobbyState(room));
+    io.to(p.socketId).emit('lobby', lobbyState(room, p.token));
   }
 }
 
@@ -74,11 +88,13 @@ function seatBySocket(room, socketId) {
 io.on('connection', (socket) => {
   socket.data.code = null;
 
-  socket.on('createRoom', ({ name, token }, cb) => {
+  socket.on('createRoom', ({ name, token, maxPlayers, flush }, cb) => {
     if (!token) return cb?.({ error: 'Kein Spieler-Token.' });
     const code = makeCode();
     const room = {
       code,
+      maxPlayers: clampMaxPlayers(maxPlayers),
+      flush: !!flush,
       players: [{ token, name: cleanName(name), socketId: socket.id, connected: true }],
       table: null,
       cleanupTimer: null,
@@ -102,23 +118,28 @@ io.on('connection', (socket) => {
       seat.socketId = socket.id;
       seat.connected = true;
     } else {
-      if (room.players.length >= 2) return cb?.({ error: 'Raum ist voll.' });
+      if (room.table) return cb?.({ error: 'Spiel laeuft bereits.' });
+      if (room.players.length >= room.maxPlayers) return cb?.({ error: 'Raum ist voll.' });
       seat = { token, name: cleanName(name), socketId: socket.id, connected: true };
       room.players.push(seat);
     }
     socket.data.code = code;
     socket.join(code);
     cancelCleanup(room);
-
-    if (room.players.length === 2 && !room.table) {
-      room.table = new Table(
-        { id: room.players[0].token, name: room.players[0].name },
-        { id: room.players[1].token, name: room.players[1].name }
-      );
-    }
     cb?.({ ok: true, code });
     broadcast(room);
   });
+
+  // Host startet das Spiel: erstellt den Tisch aus den aktuellen Spielern.
+  function ensureTable(room) {
+    if (room.table) return;
+    const seated = room.players.filter((p) => p.connected);
+    if (seated.length < 2) return;
+    room.table = new Table(
+      room.players.map((p) => ({ id: p.token, name: p.name })),
+      { flush: room.flush }
+    );
+  }
 
   // Reconnect: derselbe Token kehrt zu seinem Sitzplatz zurueck.
   socket.on('resume', ({ code, token }, cb) => {
@@ -138,7 +159,11 @@ io.on('connection', (socket) => {
 
   socket.on('startHand', () => {
     const room = rooms.get(socket.data.code);
-    if (!room?.table) return;
+    if (!room) return;
+    // Nur der Host darf das Spiel/eine neue Hand starten.
+    if (room.players[0]?.socketId !== socket.id && room.table == null) return;
+    ensureTable(room);
+    if (!room.table) return;
     const res = room.table.startHand();
     if (res?.error) socket.emit('errorMsg', res.error);
     broadcast(room);

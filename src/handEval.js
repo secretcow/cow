@@ -1,18 +1,16 @@
-// Poker-Hand-Bewertung fuer das Kuhhandel-Deck.
-// Besonderheit: Karten haben keine Farben (nur 10 Werte, je 4-mal).
-// -> Flush und Straight-Flush sind unmoeglich.
+// Poker-Hand-Bewertung fuer das Kuhhandel-Deck (10 Werte, je 4 Exemplare/Farben).
 //
-// Rangfolge (hoch -> niedrig):
-//   8 Vierling (Four of a kind)
-//   7 Full House
-//   6 Strasse (Straight)        -- 5 aufeinanderfolgende Werte 1..10, kein Wrap
-//   5 Drilling (Three of a kind)
-//   4 Zwei Paare (Two Pair)
-//   3 Paar (Pair)
-//   2 Hohe Karte (High Card)
+// Zwei Modi:
+//   Flush AUS (Standard): keine Farben-Wertung -> kein Flush/Straight Flush.
+//     Rangfolge: 8 Vierling, 7 Full House, 6 Strasse, 5 Drilling,
+//                4 Zwei Paare, 3 Paar, 2 Hohe Karte.
+//   Flush AN: Farben zaehlen. Per Monte-Carlo (40-Karten-Deck) bestaetigt:
+//     Flush ist seltener als Full House -> Flush rangt HOEHER (Short-Deck-Regel).
+//     Rangfolge: 10 Straße Flush, 9 Vierling, 8 Flush, 7 Full House,
+//                6 Strasse, 5 Drilling, 4 Zwei Paare, 3 Paar, 2 Hohe Karte.
 //
 // Jede Hand wird als Score-Array kodiert: [kategorie, ...tiebreaker].
-// Vergleich erfolgt lexikografisch, groesser = besser.
+// Vergleich lexikografisch, groesser = besser.
 
 export const CATEGORY_NAMES = {
   8: 'Vierling',
@@ -24,14 +22,26 @@ export const CATEGORY_NAMES = {
   2: 'Hohe Karte',
 };
 
-// Bewertet genau 5 Werte (ranks). Gibt Score-Array zurueck.
-function score5(ranks) {
+// Kategorienamen im Flush-Modus (eigene Nummerierung).
+export const CATEGORY_NAMES_FLUSH = {
+  10: 'Straße Flush',
+  9: 'Vierling',
+  8: 'Flush',
+  7: 'Full House',
+  6: 'Straße',
+  5: 'Drilling',
+  4: 'Zwei Paare',
+  3: 'Paar',
+  2: 'Hohe Karte',
+};
+
+// Analysiert die Rang-Struktur von 5 Werten.
+function analyzeRanks(ranks) {
   const sorted = [...ranks].sort((a, b) => b - a); // absteigend
 
   const counts = new Map();
   for (const r of sorted) counts.set(r, (counts.get(r) || 0) + 1);
 
-  // Gruppen: nach Anzahl, dann nach Wert sortiert.
   const groups = [...counts.entries()].sort((a, b) => {
     if (b[1] !== a[1]) return b[1] - a[1];
     return b[0] - a[0];
@@ -42,10 +52,8 @@ function score5(ranks) {
   const pairs = groups.filter((g) => g[1] === 2).map((g) => g[0]);
 
   const distinct = [...counts.keys()].sort((a, b) => b - a);
-  const isStraight =
-    distinct.length === 5 && distinct[0] - distinct[4] === 4;
-  // Wheel-Regel: das Pferd (10) zaehlt zusaetzlich als niedrigste Karte.
-  // Pferd-Hahn-Gans-Katze-Hund (10-1-2-3-4) ist die niedrigstmoegliche Strasse.
+  const isStraight = distinct.length === 5 && distinct[0] - distinct[4] === 4;
+  // Wheel: das Pferd (10) zaehlt zusaetzlich als niedrigste Karte (10-1-2-3-4).
   const isWheel =
     distinct.length === 5 &&
     distinct[0] === 10 &&
@@ -54,30 +62,75 @@ function score5(ranks) {
     distinct[3] === 2 &&
     distinct[4] === 1;
 
+  // High-Card der Strasse (Wheel = 4, damit unter 1-2-3-4-5).
+  let straightHigh = null;
+  if (isStraight) straightHigh = distinct[0];
+  else if (isWheel) straightHigh = 4;
+
+  return { sorted, groups, counts4, counts3, pairs, distinct, straightHigh };
+}
+
+// Bewertet genau 5 Karten. cards: [{rank, suit}].
+// flushEnabled: ob Flush/Straight Flush gewertet werden.
+function score5(cards, flushEnabled) {
+  const ranks = cards.map((c) => c.rank);
+  const a = analyzeRanks(ranks);
+  const { sorted, groups, counts4, counts3, pairs, straightHigh } = a;
+
+  const isFlush =
+    flushEnabled && cards.every((c) => c.suit === cards[0].suit);
+  const isStraightFlush = isFlush && straightHigh !== null;
+
+  if (flushEnabled) {
+    // Nummerierung mit Flush (10..2).
+    if (isStraightFlush) return [10, straightHigh];
+    if (counts4 === 4) {
+      const quad = groups[0][0];
+      const kicker = groups.find((g) => g[1] === 1)[0];
+      return [9, quad, kicker];
+    }
+    if (isFlush) return [8, ...sorted];
+    if (counts3 && pairs.length >= 1) return [7, counts3[0], pairs[0]];
+    if (straightHigh !== null) return [6, straightHigh];
+    if (counts3) {
+      const kickers = groups
+        .filter((g) => g[1] === 1)
+        .map((g) => g[0])
+        .sort((x, y) => y - x);
+      return [5, counts3[0], ...kickers];
+    }
+    if (pairs.length >= 2) {
+      const [hi, lo] = pairs.sort((x, y) => y - x);
+      const kicker = groups.find((g) => g[1] === 1)[0];
+      return [4, hi, lo, kicker];
+    }
+    if (pairs.length === 1) {
+      const kickers = groups
+        .filter((g) => g[1] === 1)
+        .map((g) => g[0])
+        .sort((x, y) => y - x);
+      return [3, pairs[0], ...kickers];
+    }
+    return [2, ...sorted];
+  }
+
+  // Nummerierung ohne Flush (8..2) — unveraendert.
   if (counts4 === 4) {
     const quad = groups[0][0];
     const kicker = groups.find((g) => g[1] === 1)[0];
     return [8, quad, kicker];
   }
-  if (counts3 && pairs.length >= 1) {
-    return [7, counts3[0], pairs[0]];
-  }
-  if (isStraight) {
-    return [6, distinct[0]];
-  }
-  if (isWheel) {
-    // High-Card der Wheel = 4 (Hund), damit sie unter der 1-2-3-4-5-Strasse liegt.
-    return [6, 4];
-  }
+  if (counts3 && pairs.length >= 1) return [7, counts3[0], pairs[0]];
+  if (straightHigh !== null) return [6, straightHigh];
   if (counts3) {
     const kickers = groups
       .filter((g) => g[1] === 1)
       .map((g) => g[0])
-      .sort((a, b) => b - a);
+      .sort((x, y) => y - x);
     return [5, counts3[0], ...kickers];
   }
   if (pairs.length >= 2) {
-    const [hi, lo] = pairs.sort((a, b) => b - a);
+    const [hi, lo] = pairs.sort((x, y) => y - x);
     const kicker = groups.find((g) => g[1] === 1)[0];
     return [4, hi, lo, kicker];
   }
@@ -85,7 +138,7 @@ function score5(ranks) {
     const kickers = groups
       .filter((g) => g[1] === 1)
       .map((g) => g[0])
-      .sort((a, b) => b - a);
+      .sort((x, y) => y - x);
     return [3, pairs[0], ...kickers];
   }
   return [2, ...sorted];
@@ -113,13 +166,18 @@ function combinations5(n) {
 }
 
 // Beste 5-Karten-Hand aus beliebig vielen Karten (typisch 7).
-// cards: Array von { rank, copy }. Gibt { score, name, ranks } zurueck.
-export function evaluate(cards) {
-  const ranks = cards.map((c) => c.rank);
+// cards: Array von { rank, suit, copy }.
+// options: { flush?: boolean }
+export function evaluate(cards, options = {}) {
+  const flushEnabled = !!options.flush;
+  const names = flushEnabled ? CATEGORY_NAMES_FLUSH : CATEGORY_NAMES;
   let best = null;
   let bestIdx = null;
-  for (const combo of combinations5(ranks.length)) {
-    const s = score5(combo.map((i) => ranks[i]));
+  for (const combo of combinations5(cards.length)) {
+    const s = score5(
+      combo.map((i) => cards[i]),
+      flushEnabled
+    );
     if (!best || compareScores(s, best) > 0) {
       best = s;
       bestIdx = combo;
@@ -127,7 +185,7 @@ export function evaluate(cards) {
   }
   return {
     score: best,
-    name: CATEGORY_NAMES[best[0]],
+    name: names[best[0]],
     cards: bestIdx.map((i) => cards[i]),
   };
 }
