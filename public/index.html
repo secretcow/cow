@@ -90,6 +90,7 @@
 
       <!-- Aktionen -->
       <div class="controls" id="controls">
+        <div class="my-hand hidden" id="myHandLabel"></div>
         <div class="turn-indicator" id="turnIndicator"></div>
         <div class="action-buttons hidden" id="actionButtons">
           <button class="btn act" data-act="fold" id="foldBtn"></button>
@@ -118,6 +119,14 @@
       </div>
 
       <div class="log" id="log"></div>
+
+      <div class="chat" id="chatPanel">
+        <div class="chat-messages" id="chatMessages"></div>
+        <form class="chat-input" id="chatForm" autocomplete="off">
+          <input id="chatInput" maxlength="200" autocomplete="off" />
+          <button class="btn small" type="submit" id="chatSend"></button>
+        </form>
+      </div>
     </div>
 
     <div id="toast" class="toast hidden"></div>

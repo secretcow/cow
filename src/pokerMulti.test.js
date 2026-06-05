@@ -171,5 +171,76 @@ function players(n) {
   assert('Show idempotent', t.shownCards.size === 1);
 }
 
+// ---- Test 9: Live-Handstaerke (myHand) waehrend des Setzens ----
+{
+  const t = new Table(players(2), { flush: false });
+  t.startHand();
+  const C = (rank, suit) => ({ rank, suit, copy: suit });
+  // Praeflop: Paar auf der Hand -> cat 3 (Paar).
+  t.players[0].hole = [C(9, 0), C(9, 1)];
+  const v = t.view('P0');
+  assert('myHand vorhanden praeflop', v.myHand && v.myHand.cat === 3);
+  // Hohe Karte: zwei verschiedene Raenge -> cat 2.
+  t.players[1].hole = [C(2, 0), C(7, 1)];
+  assert('myHand Hohe Karte', t.view('P1').myHand.cat === 2);
+  // Mit Board (>=5 Karten) volle Auswertung: Drilling 9.
+  t.community = [C(9, 2), C(3, 0), C(4, 1), C(1, 0), C(6, 0)];
+  t.stage = 'river';
+  assert('myHand Drilling am River', t.view('P0').myHand.cat === 5);
+  // Gefoldeter Spieler hat keine Live-Handstaerke.
+  t.players[1].folded = true;
+  assert('myHand null wenn gefoldet', t.view('P1').myHand === null);
+}
+
+// ---- Test 10: All-In-Run-out (autoRunout=false) gestaffelt mit Equities ----
+{
+  const t = new Table(players(3), { flush: false });
+  t.autoRunout = false;
+  t.players[0].stack = 100;
+  t.players[1].stack = 100;
+  t.players[2].stack = 100;
+  t.startHand();
+  // Alle All-In bis Setzrunde geschlossen.
+  let guard = 0;
+  while (t.stage === 'preflop' && t.toAct !== null && guard++ < 20) {
+    const cur = t.players[t.toAct];
+    const a = t.view(cur.id).actions;
+    if (a.canRaise) t.act(cur.id, 'raise', a.maxRaiseTo);
+    else if (a.canCall) t.act(cur.id, 'call');
+    else t.act(cur.id, 'check');
+  }
+  assert('Run-out aktiv nach All-In', t.runoutActive === true);
+  assert('Equities berechnet', Array.isArray(t.equities) && t.equities.length === 3);
+  assert('Equities summieren ~100%', Math.abs(t.equities.reduce((s, e) => s + e.pct, 0) - 100) <= 3);
+  assert('view exponiert runout', t.view('P0').runout === true);
+  assert('Board noch nicht komplett', t.community.length < 5);
+  // Gestaffelt aufdecken, bis Hand vorbei.
+  let steps = 0;
+  let done = false;
+  while (!done && steps++ < 10) done = t.stepRunout().done;
+  assert('Run-out endet in handover', t.stage === 'handover');
+  assert('Board komplett (5)', t.community.length === 5);
+  assert('runoutActive aus nach Ende', t.runoutActive === false);
+}
+
+// ---- Test 11: autoRunout=true laeuft synchron durch (Default, fuer Tests) ----
+{
+  const t = new Table(players(3), { flush: false });
+  t.players[0].stack = 100;
+  t.players[1].stack = 100;
+  t.players[2].stack = 100;
+  t.startHand();
+  let guard = 0;
+  while (t.stage !== 'handover' && guard++ < 30) {
+    const cur = t.players[t.toAct];
+    const a = t.view(cur.id).actions;
+    if (a.canRaise) t.act(cur.id, 'raise', a.maxRaiseTo);
+    else if (a.canCall) t.act(cur.id, 'call');
+    else t.act(cur.id, 'check');
+  }
+  assert('autoRunout: direkt handover', t.stage === 'handover');
+  assert('autoRunout: runout nie aktiv', t.runoutActive === false);
+}
+
 console.log(`\n${pass} bestanden, ${fail} fehlgeschlagen`);
 process.exit(fail === 0 ? 0 : 1);

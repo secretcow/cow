@@ -11,6 +11,38 @@ export const STARTING_STACK = 1000;
 export const SMALL_BLIND = 10;
 export const BIG_BLIND = 20;
 
+// Binomialkoeffizient C(n, k) – fuer die Entscheidung exakt vs. Monte-Carlo.
+function nCk(n, k) {
+  if (k < 0 || k > n) return 0;
+  if (k === 0 || k === n) return 1;
+  k = Math.min(k, n - k);
+  let r = 1;
+  for (let j = 0; j < k; j++) r = (r * (n - j)) / (j + 1);
+  return Math.round(r);
+}
+
+// Live-Handstaerke waehrend des Setzens: beste Kategorie aus den bisher bekannten
+// Karten (eigene Hole-Cards + bereits gezeigtes Board). Bei <5 Karten greift eine
+// einfache Heuristik (Paar/Hohe Karte), sonst die volle Auswertung.
+function liveCategory(hole, community, flush) {
+  const cards = [...hole, ...community];
+  if (cards.length >= 5) return evaluate(cards, { flush }).score[0];
+  // Weniger als 5 Karten: nur Paar (3) oder Hohe Karte (2) moeglich.
+  const counts = new Map();
+  for (const c of cards) counts.set(c.rank, (counts.get(c.rank) || 0) + 1);
+  let max = 0;
+  for (const v of counts.values()) if (v > max) max = v;
+  if (max >= 4) return 8; // theoretisch nur mit 4 gleichen Hole-Cards unmoeglich, sicherheitshalber
+  if (max === 3) return 5; // Drilling
+  if (max === 2) {
+    // Zwei Paare moeglich? (zwei verschiedene Paare)
+    let pairs = 0;
+    for (const v of counts.values()) if (v >= 2) pairs++;
+    return pairs >= 2 ? 4 : 3;
+  }
+  return 2; // Hohe Karte
+}
+
 export class Table {
   // Aufruf:
   //   new Table([{id,name}, ...], { flush })   // 2-6 Spieler
@@ -56,6 +88,15 @@ export class Table {
     this.matchOver = false;
     this.matchWinnerId = null;
     this.shownCards = new Set(); // Sitze, die nach Fold-Sieg freiwillig aufgedeckt haben
+
+    // All-In-Run-out: Wenn niemand mehr handeln kann, aber >=2 Spieler im Showdown
+    // stehen, werden die restlichen Karten gezeigt. Im Offline-Test (autoRunout=true)
+    // geschieht das sofort/synchron. Der Server setzt autoRunout=false und deckt die
+    // Strassen zeitversetzt ueber stepRunout() auf (TV-Poker-Stil) und zeigt vorher
+    // die Gewinnwahrscheinlichkeiten (equities).
+    this.autoRunout = true;
+    this.runoutActive = false;
+    this.equities = null; // [{ i, pct }] waehrend eines gestaffelten Run-outs
   }
 
   // Strukturiertes Log-Event: { key, ...params }. Die Uebersetzung passiert im Client,
@@ -91,6 +132,8 @@ export class Table {
     this.matchOver = false;
     this.matchWinnerId = null;
     this.shownCards = new Set();
+    this.runoutActive = false;
+    this.equities = null;
     this.log = [];
     this.addLog({ key: 'rematch' });
     return { ok: true };
@@ -148,6 +191,8 @@ export class Table {
     this.result = null;
     this.actedSinceRaise = new Set();
     this.shownCards = new Set();
+    this.runoutActive = false;
+    this.equities = null;
 
     for (const p of this.players) {
       p.hole = [];
@@ -352,30 +397,40 @@ export class Table {
     return canAct.every((p) => this.actedSinceRaise.has(this.players.indexOf(p)));
   }
 
+  canActCount() {
+    return this.players.filter((p) => !p.folded && !p.allIn).length;
+  }
+
+  // Anzahl Spieler, die noch in der Hand sind (nicht gefoldet) -> potenzielle Showdown-Teilnehmer.
+  contenderCount() {
+    return this.players.filter((p) => !p.folded).length;
+  }
+
   proceedAfterBetting() {
     for (const p of this.players) p.bet = 0;
     this.currentBet = 0;
     this.minRaise = BIG_BLIND;
     this.actedSinceRaise = new Set();
 
-    const canActCount = () =>
-      this.players.filter((p) => !p.folded && !p.allIn).length;
+    // All-In-Run-out: keiner (oder nur einer) kann mehr handeln, aber >=2 Spieler
+    // stehen im Showdown und es fehlen noch Gemeinschaftskarten.
+    const isRunout =
+      this.contenderCount() >= 2 &&
+      this.canActCount() < 2 &&
+      this.community.length < 5;
+
+    if (isRunout && !this.autoRunout) {
+      // Server-Modus: gestaffelt aufdecken. Wahrscheinlichkeiten jetzt berechnen,
+      // dann auf externe stepRunout()-Takte warten.
+      this.runoutActive = true;
+      this.computeEquities();
+      return;
+    }
 
     while (true) {
-      if (this.stage === 'preflop') {
-        this.dealCommunity(3);
-        this.stage = 'flop';
-      } else if (this.stage === 'flop') {
-        this.dealCommunity(1);
-        this.stage = 'turn';
-      } else if (this.stage === 'turn') {
-        this.dealCommunity(1);
-        this.stage = 'river';
-      } else if (this.stage === 'river') {
-        return this.showdown();
-      }
+      if (this.advanceStreet()) return this.showdown();
 
-      if (canActCount() >= 2) {
+      if (this.canActCount() >= 2) {
         // Postflop handelt der erste aktive Spieler links vom Button.
         this.toAct = this.firstActorFrom((this.button + 1) % this.n);
         if (this.toAct !== null) return;
@@ -384,11 +439,139 @@ export class Table {
     }
   }
 
+  // Deckt die naechste Strasse auf. Liefert true, wenn der River bereits lag
+  // (also ein Showdown ansteht).
+  advanceStreet() {
+    if (this.stage === 'preflop') {
+      this.dealCommunity(3);
+      this.stage = 'flop';
+    } else if (this.stage === 'flop') {
+      this.dealCommunity(1);
+      this.stage = 'turn';
+    } else if (this.stage === 'turn') {
+      this.dealCommunity(1);
+      this.stage = 'river';
+    } else if (this.stage === 'river') {
+      return true;
+    }
+    return false;
+  }
+
+  // Ein Takt des gestaffelten All-In-Run-outs (vom Server per Timer aufgerufen).
+  // Deckt genau eine Strasse auf bzw. fuehrt am River den Showdown durch.
+  // Liefert { done } – done=true, sobald die Hand abgeschlossen ist.
+  stepRunout() {
+    if (!this.runoutActive) return { done: true };
+    if (this.stage === 'river') {
+      this.runoutActive = false;
+      this.equities = null;
+      this.showdown();
+      return { done: true };
+    }
+    this.advanceStreet();
+    if (this.stage === 'river') {
+      // River liegt – Wahrscheinlichkeiten sind jetzt eindeutig, nicht mehr noetig.
+      this.computeEquities();
+    } else {
+      this.computeEquities();
+    }
+    return { done: false };
+  }
+
   dealCommunity(n) {
-    for (let k = 0; k < n; k++) this.community.push(this.deck.pop());
     const street = n === 3 ? 'flop' : this.stage === 'flop' ? 'turn' : 'river';
+    for (let k = 0; k < n; k++) this.community.push(this.deck.pop());
     const cards = this.community.slice(-n).map((c) => ({ rank: c.rank, suit: c.suit }));
     this.addLog({ key: 'community', street, cards });
+  }
+
+  // ---- All-In-Gewinnwahrscheinlichkeiten ----
+  // Berechnet fuer alle noch nicht gefoldeten Spieler die Equity (Gewinn-/Split-Anteil)
+  // ueber die noch fehlenden Gemeinschaftskarten. Exakte Enumeration, wenn die Anzahl
+  // der Kombinationen klein ist, sonst Monte-Carlo-Stichprobe.
+  computeEquities() {
+    const contenders = this.players
+      .map((p, i) => ({ p, i }))
+      .filter((x) => !x.p.folded);
+    if (contenders.length < 2) {
+      this.equities = null;
+      return;
+    }
+
+    const need = 5 - this.community.length;
+    // Verbleibendes Deck = alle Karten, die weder auf der Hand eines Contenders
+    // noch auf dem Board liegen. (Gefoldete Hole-Cards sind unbekannt -> bleiben im Topf.)
+    const used = new Set();
+    const key = (c) => c.rank * 10 + c.suit;
+    for (const c of this.community) used.add(key(c));
+    for (const x of contenders) for (const c of x.p.hole) used.add(key(c));
+    const deck = [];
+    for (const c of buildDeck()) if (!used.has(key(c))) deck.push(c);
+
+    const wins = new Array(contenders.length).fill(0);
+    let total = 0;
+
+    const tally = (board) => {
+      const full = [...this.community, ...board];
+      let best = null;
+      let bestIdxs = [];
+      for (let k = 0; k < contenders.length; k++) {
+        const sc = evaluate([...contenders[k].p.hole, ...full], { flush: this.flush }).score;
+        const cmp = best === null ? 1 : compareScores(sc, best);
+        if (cmp > 0) {
+          best = sc;
+          bestIdxs = [k];
+        } else if (cmp === 0) {
+          bestIdxs.push(k);
+        }
+      }
+      const share = 1 / bestIdxs.length;
+      for (const k of bestIdxs) wins[k] += share;
+      total++;
+    };
+
+    if (need === 0) {
+      tally([]);
+    } else {
+      const combos = nCk(deck.length, need);
+      if (combos <= 20000) {
+        // Exakte Enumeration aller fehlenden Boards.
+        const idx = [];
+        const rec = (start, depth) => {
+          if (depth === need) {
+            tally(idx.map((j) => deck[j]));
+            return;
+          }
+          for (let j = start; j < deck.length; j++) {
+            idx.push(j);
+            rec(j + 1, depth + 1);
+            idx.pop();
+          }
+        };
+        rec(0, 0);
+      } else {
+        // Monte-Carlo-Stichprobe.
+        const SAMPLES = 2500;
+        for (let s = 0; s < SAMPLES; s++) {
+          // Zufaellige `need` verschiedene Karten ziehen (Fisher-Yates-Teilmischung).
+          const pool = deck.slice();
+          const board = [];
+          for (let d = 0; d < need; d++) {
+            const r = d + Math.floor(Math.random() * (pool.length - d));
+            const tmp = pool[d];
+            pool[d] = pool[r];
+            pool[r] = tmp;
+            board.push(pool[d]);
+          }
+          tally(board);
+        }
+      }
+    }
+
+    this.equities = contenders.map((x, k) => ({
+      i: x.i,
+      pct: total > 0 ? Math.round((wins[k] / total) * 100) : 0,
+    }));
   }
 
   showdown() {
@@ -577,6 +760,20 @@ export class Table {
     // Zentraler Pot = bereits eingesammelt (ohne aktuelle Bets, die als Chips davor liegen).
     const collected = this.players.reduce((s, p) => s + (p.committed - p.bet), 0);
 
+    // Live-Handstaerke fuer mich, solange ich aktiv in einer laufenden Hand bin.
+    let myHand = null;
+    if (
+      me &&
+      !me.folded &&
+      me.inHand &&
+      (this.stage === 'preflop' ||
+        this.stage === 'flop' ||
+        this.stage === 'turn' ||
+        this.stage === 'river')
+    ) {
+      myHand = { cat: liveCategory(me.hole, this.community, this.flush) };
+    }
+
     return {
       handNo: this.handNo,
       stage: this.stage,
@@ -603,6 +800,9 @@ export class Table {
           : null,
       result: this.result,
       shown: [...this.shownCards],
+      runout: this.runoutActive,
+      equities: this.runoutActive ? this.equities : null,
+      myHand,
       log: this.log,
       matchOver: this.matchOver,
       matchWinnerId: this.matchWinnerId,

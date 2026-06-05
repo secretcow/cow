@@ -86,6 +86,11 @@ const I18N = {
     nextHand: 'Nächste Hand',
     showCards: '🃏 Karten zeigen',
     leaveConfirm: 'Tisch verlassen und zurück zur Lobby?',
+    myHandTitle: 'Deine Hand',
+    allInTitle: 'All-In — Karten werden aufgedeckt',
+    winChance: 'Gewinnchance',
+    chatPlaceholder: 'Nachricht …',
+    send: 'Senden',
     rematch: 'Revanche',
     matchWon: '🏆 Du hast das Match gewonnen!',
     matchLost: '😿 Match verloren.',
@@ -170,6 +175,11 @@ const I18N = {
     nextHand: 'Next hand',
     showCards: '🃏 Show cards',
     leaveConfirm: 'Leave the table and return to the lobby?',
+    myHandTitle: 'Your hand',
+    allInTitle: 'All-In — revealing cards',
+    winChance: 'Win chance',
+    chatPlaceholder: 'Message …',
+    send: 'Send',
     rematch: 'Rematch',
     matchWon: '🏆 You won the match!',
     matchLost: '😿 Match lost.',
@@ -263,6 +273,8 @@ function applyStatic() {
   $('nameInput').placeholder = t('namePlaceholder');
   $('codeInput').placeholder = t('codePlaceholder');
   $('rulesBody').innerHTML = t('rulesHtml', createOpts.flush);
+  if ($('chatInput')) $('chatInput').placeholder = t('chatPlaceholder');
+  if ($('chatSend')) $('chatSend').textContent = t('send');
   // Lang-Buttons markieren
   document.querySelectorAll('.lang-btn[data-lang]').forEach((b) => {
     b.classList.toggle('active', b.dataset.lang === lang);
@@ -352,6 +364,40 @@ socket.on('state', (s) => {
   render(s);
 });
 socket.on('errorMsg', (msg) => toast(msg));
+
+// ---------- Tisch-Chat ----------
+let chatMsgs = [];
+socket.on('chatHistory', (msgs) => {
+  chatMsgs = Array.isArray(msgs) ? msgs.slice() : [];
+  renderChat();
+});
+socket.on('chat', (msg) => {
+  chatMsgs.push(msg);
+  if (chatMsgs.length > 80) chatMsgs.shift();
+  renderChat();
+});
+function renderChat() {
+  const box = $('chatMessages');
+  if (!box) return;
+  box.innerHTML = chatMsgs
+    .map(
+      (m) =>
+        `<div class="chat-msg"><span class="chat-name">${escapeHtml(m.name)}</span><span class="chat-text">${escapeHtml(m.text)}</span></div>`
+    )
+    .join('');
+  box.scrollTop = box.scrollHeight;
+}
+const chatForm = $('chatForm');
+if (chatForm) {
+  chatForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const inp = $('chatInput');
+    const text = inp.value.trim();
+    if (!text) return;
+    socket.emit('chat', { text });
+    inp.value = '';
+  });
+}
 
 function renderLobby(lob) {
   if (lob.started) {
@@ -518,6 +564,7 @@ function render(s) {
 
   renderResult(s, me);
   renderControls(s, me);
+  renderMyHand(s);
   renderLog(s.log);
 
   if (lastLobby) renderConnStatus(lastLobby);
@@ -612,6 +659,17 @@ function buildSeat(s, p, isMe, animate, revealAnim) {
   bet.className = 'bet-chip' + (p.bet > 0 ? '' : ' hidden');
   bet.textContent = p.allIn && p.bet > 0 ? `${p.bet} · ${t('allInTag')}` : `${p.bet}`;
 
+  // Equity-Badge waehrend eines All-In-Run-outs (Gewinnwahrscheinlichkeit).
+  let equity = null;
+  if (s.runout && s.equities && !p.folded) {
+    const eq = s.equities.find((e) => e.i === p.seat);
+    if (eq) {
+      equity = document.createElement('div');
+      equity.className = 'equity';
+      equity.textContent = `${eq.pct}%`;
+    }
+  }
+
   // Hand-Label (Showdown)
   const label = document.createElement('div');
   label.className = 'hand-label hidden';
@@ -625,11 +683,13 @@ function buildSeat(s, p, isMe, animate, revealAnim) {
     seat.appendChild(bet);
     seat.appendChild(hole);
     seat.appendChild(label);
+    if (equity) seat.appendChild(equity);
     seat.appendChild(info);
   } else {
     seat.appendChild(hole);
     seat.appendChild(bet);
     seat.appendChild(label);
+    if (equity) seat.appendChild(equity);
     seat.appendChild(info);
   }
   return seat;
@@ -777,6 +837,18 @@ function clampRaise(v) {
   return n;
 }
 
+// Live-Handstaerke: zeigt, was ich aktuell als beste Hand halte (Paar, Zwei Paare …).
+function renderMyHand(s) {
+  const el = $('myHandLabel');
+  if (!el) return;
+  if (s.myHand && s.myHand.cat) {
+    el.innerHTML = `<span class="mh-label">${escapeHtml(t('myHandTitle'))}</span> <span class="mh-cat">${escapeHtml(catName(lang, s.myHand.cat, s.flush))}</span>`;
+    el.classList.remove('hidden');
+  } else {
+    el.classList.add('hidden');
+  }
+}
+
 function renderLog(log) {
   const el = $('log');
   el.innerHTML = log
@@ -846,6 +918,8 @@ $('leaveBtn').onclick = () => {
   forgetRoom();
   lastState = null;
   lastLobby = null;
+  chatMsgs = [];
+  renderChat();
   $('seats').innerHTML = '';
   $('game').classList.add('hidden');
   $('waiting').classList.add('hidden');

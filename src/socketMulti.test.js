@@ -42,9 +42,12 @@ const ack = (s, ev, payload) =>
 
 // Treibt die Hand, bis sie 'handover' erreicht. Fuer jeden Zug wird der Socket
 // gesucht, dessen eigener Sitz am Zug ist, und die Strategie liefert die Aktion.
-async function playUntilHandover(sockets, strategy, maxSteps = 80) {
-  let steps = 0;
-  while (steps++ < maxSteps) {
+// Deadline-basiert statt fester Schrittzahl: ein All-In-Run-out wird vom Server
+// zeitversetzt aufgedeckt (mehrere Sekunden), daher warten wir bis zum Handover
+// oder bis das Zeitlimit erreicht ist.
+async function playUntilHandover(sockets, strategy, deadlineMs = 25000) {
+  const until = Date.now() + deadlineMs;
+  while (Date.now() < until) {
     const ref = sockets.find((s) => s.latestState)?.latestState;
     if (!ref) {
       await wait(50);
@@ -53,6 +56,7 @@ async function playUntilHandover(sockets, strategy, maxSteps = 80) {
     if (ref.stage === 'handover') return true;
     const turnId = ref.toActId;
     if (turnId == null) {
+      // Niemand am Zug (z. B. laufender All-In-Run-out) -> auf naechsten Tick warten.
       await wait(50);
       continue;
     }

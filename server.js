@@ -21,6 +21,8 @@ const io = new Server(httpServer);
  */
 const rooms = new Map();
 const ROOM_TTL_MS = 10 * 60 * 1000; // Raum nach 10 Min. ohne Verbindung loeschen
+const RUNOUT_STEP_MS = Number(process.env.RUNOUT_STEP_MS ?? 1300); // Takt fuer All-In-Reveal
+const CHAT_HISTORY = 60; // gespeicherte Chat-Nachrichten pro Raum
 
 function makeCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -85,6 +87,10 @@ function seatBySocket(room, socketId) {
   return room?.players.find((p) => p.socketId === socketId) || null;
 }
 
+function sendChatHistory(socket, room) {
+  if (room.chat?.length) socket.emit('chatHistory', room.chat);
+}
+
 io.on('connection', (socket) => {
   socket.data.code = null;
 
@@ -98,6 +104,8 @@ io.on('connection', (socket) => {
       players: [{ token, name: cleanName(name), socketId: socket.id, connected: true }],
       table: null,
       cleanupTimer: null,
+      runoutTimer: null,
+      chat: [],
     };
     rooms.set(code, room);
     socket.data.code = code;
@@ -128,6 +136,7 @@ io.on('connection', (socket) => {
     cancelCleanup(room);
     cb?.({ ok: true, code });
     broadcast(room);
+    sendChatHistory(socket, room);
   });
 
   // Host startet das Spiel: erstellt den Tisch aus den aktuellen Spielern.
@@ -139,6 +148,29 @@ io.on('connection', (socket) => {
       room.players.map((p) => ({ id: p.token, name: p.name })),
       { flush: room.flush }
     );
+    // Server deckt All-In-Run-outs zeitversetzt auf (TV-Poker-Stil).
+    room.table.autoRunout = false;
+  }
+
+  // Treibt einen gestaffelten All-In-Run-out per Timer voran: pro Takt eine Strasse.
+  function driveRunout(room) {
+    if (room.runoutTimer) return; // laeuft bereits
+    const step = () => {
+      room.runoutTimer = null;
+      if (!rooms.has(room.code) || !room.table) return;
+      const res = room.table.stepRunout();
+      broadcast(room);
+      if (!res.done) {
+        room.runoutTimer = setTimeout(step, RUNOUT_STEP_MS);
+      }
+    };
+    room.runoutTimer = setTimeout(step, RUNOUT_STEP_MS);
+  }
+
+  function maybeDriveRunout(room) {
+    if (room.table?.runoutActive && room.table.stage !== 'handover') {
+      driveRunout(room);
+    }
   }
 
   // Reconnect: derselbe Token kehrt zu seinem Sitzplatz zurueck.
@@ -155,6 +187,7 @@ io.on('connection', (socket) => {
     cancelCleanup(room);
     cb?.({ ok: true, code });
     broadcast(room);
+    sendChatHistory(socket, room);
   });
 
   socket.on('startHand', () => {
@@ -167,6 +200,7 @@ io.on('connection', (socket) => {
     const res = room.table.startHand();
     if (res?.error) socket.emit('errorMsg', res.error);
     broadcast(room);
+    maybeDriveRunout(room);
   });
 
   socket.on('rematch', () => {
@@ -194,6 +228,21 @@ io.on('connection', (socket) => {
     const res = room.table.act(seat.token, type, amount);
     if (res?.error) socket.emit('errorMsg', res.error);
     broadcast(room);
+    maybeDriveRunout(room);
+  });
+
+  // Tisch-Chat: kurze Nachrichten zwischen den Spielern am Tisch.
+  socket.on('chat', ({ text }) => {
+    const room = rooms.get(socket.data.code);
+    if (!room) return;
+    const seat = seatBySocket(room, socket.id);
+    if (!seat) return;
+    const clean = (text || '').toString().replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (!clean) return;
+    const msg = { name: seat.name, text: clean, ts: Date.now() };
+    room.chat.push(msg);
+    if (room.chat.length > CHAT_HISTORY) room.chat.shift();
+    io.to(room.code).emit('chat', msg);
   });
 
   // Tisch verlassen und zurueck zur Lobby.
