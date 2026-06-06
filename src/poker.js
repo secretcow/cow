@@ -79,8 +79,11 @@ export class Table {
     this.flush = !!opts.flush;
     const ss = Math.floor(Number(opts.startingStack));
     this.startingStack = Number.isFinite(ss) && ss > 0 ? ss : STARTING_STACK;
+    // Cash-Game: Buy-in = startingStack, busten beendet das Match NICHT (Rebuy
+    // moeglich). Schliesst den Turniermodus aus.
+    this.cash = !!opts.cash;
     // Turniermodus: Blinds steigen mit der Handnummer. Sonst fix 10/20.
-    this.tournament = !!opts.tournament;
+    this.tournament = !this.cash && !!opts.tournament;
     const lh = Math.floor(Number(opts.levelHands));
     this.levelHands = Number.isFinite(lh) && lh > 0 ? lh : 6;
     this.smallBlind = SMALL_BLIND;
@@ -766,13 +769,37 @@ export class Table {
     this.toAct = null;
     this.stage = 'handover';
 
-    // Match-Ende? Nur noch ein Spieler mit Chips.
-    const withChips = this.players.filter((p) => p.stack > 0);
-    if (withChips.length <= 1) {
-      this.matchOver = true;
-      this.matchWinnerId = withChips[0]?.id || null;
-      if (withChips[0]) this.addLog({ key: 'matchOver', name: withChips[0].name });
+    // Match-Ende? Nur noch ein Spieler mit Chips. Im Cash-Game endet nichts –
+    // gebustete Spieler koennen per Rebuy nachkaufen.
+    if (!this.cash) {
+      const withChips = this.players.filter((p) => p.stack > 0);
+      if (withChips.length <= 1) {
+        this.matchOver = true;
+        this.matchWinnerId = withChips[0]?.id || null;
+        if (withChips[0]) this.addLog({ key: 'matchOver', name: withChips[0].name });
+      }
     }
+  }
+
+  // Cash-Game-Rebuy: Chips zwischen den Haenden nachkaufen. Gibt den tatsaechlich
+  // gutgeschriebenen Betrag zurueck (0 bei Fehler) – der Server bucht ihn vom Wallet.
+  rebuy(playerId, amount) {
+    if (!this.cash) return { error: 'Rebuy nur im Cash-Game.' };
+    if (this.stage !== 'idle' && this.stage !== 'handover')
+      return { error: 'Rebuy nur zwischen den Haenden.' };
+    const p = this.players.find((x) => x.id === playerId);
+    if (!p) return { error: 'Spieler nicht gefunden.' };
+    const amt = Math.floor(Number(amount));
+    if (!(amt > 0)) return { error: 'Ungueltiger Betrag.' };
+    p.stack += amt;
+    this.addLog({ key: 'rebuy', name: p.name, amount: amt });
+    return { ok: true, amount: amt };
+  }
+
+  // Aktueller Stack eines Spielers (fuer Cash-out beim Verlassen).
+  stackOf(playerId) {
+    const p = this.players.find((x) => x.id === playerId);
+    return p ? p.stack : 0;
   }
 
   // ---- Spieler-spezifische Sicht ----
@@ -835,6 +862,10 @@ export class Table {
       handNo: this.handNo,
       stage: this.stage,
       flush: this.flush,
+      cash: this.cash,
+      buyIn: this.cash ? this.startingStack : null,
+      myStack: me ? me.stack : 0,
+      betweenHands: this.stage === 'idle' || this.stage === 'handover',
       community: this.community,
       pot: collected,
       totalPot: this.players.reduce((s, p) => s + p.committed, 0),

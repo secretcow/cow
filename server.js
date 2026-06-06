@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { Table } from './src/poker.js';
 import {
   loadProfile,
+  adjustWallet,
   recordMatchWin,
   getLeaderboard,
   storeInfo,
@@ -60,7 +61,7 @@ app.get('/api/profile', async (req, res) => {
  * damit ein Reconnect denselben Sitzplatz wiederfindet.
  */
 const rooms = new Map();
-const ROOM_TTL_MS = 10 * 60 * 1000; // Raum nach 10 Min. ohne Verbindung loeschen
+const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS ?? 10 * 60 * 1000); // Raum nach 10 Min. ohne Verbindung loeschen
 const RUNOUT_STEP_MS = Number(process.env.RUNOUT_STEP_MS ?? 1300); // Takt fuer All-In-Reveal
 const CHAT_HISTORY = 60; // gespeicherte Chat-Nachrichten pro Raum
 // Schonfrist, bevor ein getrennter Spieler, der am Zug ist, automatisch
@@ -112,6 +113,7 @@ function lobbyState(room, forToken) {
     startingStack: room.startingStack,
     tournament: room.tournament,
     levelHands: room.levelHands,
+    cash: room.cash,
     started: !!room.table,
     players: room.players.map((p, i) => ({
       name: p.name,
@@ -153,6 +155,53 @@ async function sendProfile(socket, token, name) {
   }
 }
 
+// ---------------- Cash-Game: Buy-in / Cash-out ----------------
+
+// Bucht den Buy-in vom Wallet ab. Prueft vorher die Deckung. Markiert den Sitz
+// als eingekauft, damit der Cash-out spaeter weiss, dass Chips zurueckgehen.
+async function takeBuyIn(seat, amount) {
+  if (!(amount > 0)) return { ok: true };
+  const p = await loadProfile(seat.token, seat.name);
+  if ((p.wallet || 0) < amount) return { error: 'Nicht genug Guthaben fuer den Buy-in.' };
+  await adjustWallet(seat.token, -amount, seat.name);
+  seat.boughtIn = true;
+  seat.buyIn = amount;
+  seat.cashedOut = false;
+  return { ok: true };
+}
+
+// Schreibt die aktuellen Chips eines Sitzes zurueck aufs Wallet (genau einmal).
+// Vor Spielstart ist das der gezahlte Buy-in, danach der aktuelle Engine-Stack.
+function cashOutSeat(room, seat) {
+  if (!room.cash || !seat.boughtIn || seat.cashedOut) return;
+  seat.cashedOut = true;
+  const chips = room.table ? room.table.stackOf(seat.token) : seat.buyIn || 0;
+  if (room.table) {
+    const pl = room.table.players.find((p) => p.id === seat.token);
+    if (pl) pl.stack = 0; // Chips verlassen den Tisch
+  }
+  if (chips > 0) {
+    adjustWallet(seat.token, chips, seat.name).catch((e) =>
+      console.error('cashOut:', e.message)
+    );
+  }
+}
+
+// Raum endgueltig schliessen: im Cash-Game alle verbliebenen Chips auszahlen.
+function destroyRoom(room) {
+  if (room.cash) for (const seat of room.players) cashOutSeat(room, seat);
+  cancelCleanup(room);
+  if (room.autoActTimer) {
+    clearTimeout(room.autoActTimer);
+    room.autoActTimer = null;
+  }
+  if (room.runoutTimer) {
+    clearTimeout(room.runoutTimer);
+    room.runoutTimer = null;
+  }
+  rooms.delete(room.code);
+}
+
 // Erkennt den Uebergang zu "Match beendet" und schreibt den Sieg dem Gewinner
 // genau einmal gut (Token == Engine-Spieler-Id). Reset passiert bei rematch.
 function checkMatchOver(room) {
@@ -177,7 +226,7 @@ function cancelCleanup(room) {
 function maybeScheduleCleanup(room) {
   if (room.players.every((p) => !p.connected)) {
     cancelCleanup(room);
-    room.cleanupTimer = setTimeout(() => rooms.delete(room.code), ROOM_TTL_MS);
+    room.cleanupTimer = setTimeout(() => destroyRoom(room), ROOM_TTL_MS);
   }
 }
 
@@ -192,17 +241,25 @@ function sendChatHistory(socket, room) {
 io.on('connection', (socket) => {
   socket.data.code = null;
 
-  socket.on('createRoom', ({ name, token, maxPlayers, flush, startingStack, tournament, levelHands }, cb) => {
+  socket.on('createRoom', async ({ name, token, maxPlayers, flush, startingStack, tournament, levelHands, cash }, cb) => {
     if (!token) return cb?.({ error: 'Kein Spieler-Token.' });
     const code = makeCode();
+    const isCash = !!cash;
+    const stack = clampStack(startingStack);
+    const host = { token, name: cleanName(name), socketId: socket.id, connected: true };
+    if (isCash) {
+      const buy = await takeBuyIn(host, stack);
+      if (buy.error) return cb?.({ error: buy.error });
+    }
     const room = {
       code,
       maxPlayers: clampMaxPlayers(maxPlayers),
       flush: !!flush,
-      startingStack: clampStack(startingStack),
-      tournament: !!tournament,
+      startingStack: stack,
+      cash: isCash,
+      tournament: !isCash && !!tournament,
       levelHands: clampLevelHands(levelHands),
-      players: [{ token, name: cleanName(name), socketId: socket.id, connected: true }],
+      players: [host],
       table: null,
       cleanupTimer: null,
       runoutTimer: null,
@@ -219,7 +276,7 @@ io.on('connection', (socket) => {
     sendProfile(socket, token, cleanName(name));
   });
 
-  socket.on('joinRoom', ({ code, name, token }, cb) => {
+  socket.on('joinRoom', async ({ code, name, token }, cb) => {
     code = (code || '').toUpperCase().trim();
     if (!token) return cb?.({ error: 'Kein Spieler-Token.' });
     const room = rooms.get(code);
@@ -234,6 +291,10 @@ io.on('connection', (socket) => {
       if (room.table) return cb?.({ error: 'Spiel laeuft bereits.' });
       if (room.players.length >= room.maxPlayers) return cb?.({ error: 'Raum ist voll.' });
       seat = { token, name: cleanName(name), socketId: socket.id, connected: true };
+      if (room.cash) {
+        const buy = await takeBuyIn(seat, room.startingStack);
+        if (buy.error) return cb?.({ error: buy.error });
+      }
       room.players.push(seat);
     }
     socket.data.code = code;
@@ -257,6 +318,7 @@ io.on('connection', (socket) => {
         startingStack: room.startingStack,
         tournament: room.tournament,
         levelHands: room.levelHands,
+        cash: room.cash,
       }
     );
     // Server deckt All-In-Run-outs zeitversetzt auf (TV-Poker-Stil).
@@ -392,6 +454,27 @@ io.on('connection', (socket) => {
     broadcast(room);
   });
 
+  // Cash-Game: Chips vom Wallet nachkaufen (zwischen den Haenden).
+  socket.on('rebuy', async ({ amount } = {}, cb) => {
+    const room = rooms.get(socket.data.code);
+    if (!room?.table || !room.cash) return cb?.({ error: 'Kein Cash-Game.' });
+    const seat = seatBySocket(room, socket.id);
+    if (!seat) return cb?.({ error: 'Kein Sitz.' });
+    // Standard-Rebuy = ein Buy-in; Betrag wird aufs Wallet begrenzt.
+    let amt = Math.floor(Number(amount));
+    if (!Number.isFinite(amt) || amt <= 0) amt = room.startingStack;
+    const p = await loadProfile(seat.token, seat.name);
+    amt = Math.min(amt, p.wallet || 0);
+    if (amt <= 0) return cb?.({ error: 'Nicht genug Guthaben.' });
+    const res = room.table.rebuy(seat.token, amt);
+    if (res.error) return cb?.({ error: res.error });
+    await adjustWallet(seat.token, -amt, seat.name);
+    seat.boughtIn = true;
+    cb?.({ ok: true, amount: amt });
+    broadcast(room);
+    sendProfile(socket, seat.token, seat.name);
+  });
+
   socket.on('showCards', () => {
     const room = rooms.get(socket.data.code);
     if (!room?.table) return;
@@ -441,14 +524,13 @@ io.on('connection', (socket) => {
         // Laufendes Spiel: Sitz bleibt (gilt als getrennt), Indizes der Engine bleiben stabil.
         seat.connected = false;
       } else {
-        // Lobby-Phase: Sitz ganz entfernen.
+        // Lobby-Phase: Sitz ganz entfernen. Im Cash-Game den Buy-in zurueckzahlen.
+        cashOutSeat(room, seat);
         room.players = room.players.filter((p) => p !== seat);
       }
     }
     if (room.players.length === 0) {
-      cancelCleanup(room);
-      clearAutoAct(room);
-      rooms.delete(room.code);
+      destroyRoom(room);
       return;
     }
     broadcast(room);

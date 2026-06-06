@@ -302,5 +302,44 @@ function quickHand(t) {
   assert('cap view nextLevelIn=null', t.view('P0').blinds.nextLevelIn === null);
 }
 
+// ---- Test 15: Cash-Game -> Busten beendet das Match nicht, Rebuy & Cash-out ----
+{
+  const t = new Table(players(2), { cash: true, startingStack: 200 });
+  assert('cash flag gesetzt', t.cash === true);
+  assert('cash view cash=true', t.view('P0').cash === true);
+  assert('cash view buyIn=200', t.view('P0').buyIn === 200);
+  assert('cash stackOf P0=200', t.stackOf('P0') === 200);
+
+  // Spieler 1 verliert seinen ganzen Stack -> im Nicht-Cash waere das Match-over.
+  t.players[1].stack = 0;
+  // Eine Hand zu Ende spielen (nur P0 hat Chips -> kann nicht starten? -> liveCount<2)
+  // Stattdessen direkt endHand-Pfad ueber eine normale Hand mit beiden Chips testen:
+  t.players[1].stack = 50;
+  quickHand(t);
+  assert('cash kein matchOver trotz moeglicher Pleite', t.matchOver === false);
+
+  // Rebuy nur zwischen den Haenden erlaubt und addiert Chips.
+  const before = t.stackOf('P1');
+  const r = t.rebuy('P1', 500);
+  assert('cash rebuy ok', r.ok === true && r.amount === 500);
+  assert('cash rebuy addiert Chips', t.stackOf('P1') === before + 500);
+  assert('cash rebuy geloggt', t.log.some((e) => e.key === 'rebuy' && e.amount === 500));
+
+  // Rebuy mitten in der Hand abgelehnt.
+  t.startHand();
+  const r2 = t.rebuy('P1', 100);
+  assert('cash rebuy waehrend Hand abgelehnt', !!r2.error);
+
+  // Nicht-Cash: rebuy verweigert.
+  const t2 = new Table(players(2), { startingStack: 200 });
+  assert('non-cash rebuy verweigert', !!t2.rebuy('P0', 100).error);
+  assert('non-cash view cash=false', t2.view('P0').cash === false);
+  assert('non-cash view buyIn=null', t2.view('P0').buyIn === null);
+
+  // Cash schliesst Turnier aus.
+  const t3 = new Table(players(2), { cash: true, tournament: true });
+  assert('cash deaktiviert tournament', t3.tournament === false);
+}
+
 console.log(`\n${pass} bestanden, ${fail} fehlgeschlagen`);
 process.exit(fail === 0 ? 0 : 1);

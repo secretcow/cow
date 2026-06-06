@@ -61,6 +61,13 @@ const I18N = {
     levelLength: 'Hände pro Stufe',
     tourneyHint:
       'An: Turnier mit steigenden Blinds — alle paar Hände werden Small/Big Blind höher. Aus: Blinds bleiben konstant bei 10/20.',
+    cashMode: 'Cash-Game',
+    cashHint:
+      'An: Buy-in aus deinem Guthaben — busten beendet das Spiel nicht, du kannst nachkaufen (Rebuy). Beim Verlassen gehen deine Chips zurück aufs Guthaben (Cash-out).',
+    cashHintOn: (buy) => `An: Buy-in ${buy.toLocaleString()} 🪙 aus deinem Guthaben. Rebuy jederzeit zwischen den Händen, Cash-out beim Verlassen.`,
+    rebuyBtn: '➕ Rebuy',
+    rebuyDone: (n) => `Rebuy: +${n.toLocaleString()} 🪙`,
+    cashTag: 'Cash',
     blindInfo: (sb, bb, lvl) => `Blinds ${sb}/${bb} · Stufe ${lvl}`,
     nextBlindIn: (n) => ` · ↑ in ${n}`,
     createTable: 'Neuen Tisch erstellen',
@@ -144,6 +151,7 @@ const I18N = {
       matchOver: (e) => `Match beendet — ${e.name} gewinnt!`,
       rematch: () => 'Revanche! Neue Stacks, neues Glück.',
       blindsUp: (e) => `⬆ Blinds steigen auf ${e.sb}/${e.bb} (Stufe ${e.level}).`,
+      rebuy: (e) => `${e.name} kauft nach: +${e.amount} 🪙 (Rebuy).`,
     },
     rulesHtml: (flush) => `
       <p>10 Tiere mit Werten von Hahn (10) bis Pferd (1000), je 4-mal im Deck — jede Farbe einmal.
@@ -174,6 +182,13 @@ const I18N = {
     levelLength: 'Hands per level',
     tourneyHint:
       'On: tournament with rising blinds — small/big blind go up every few hands. Off: blinds stay constant at 10/20.',
+    cashMode: 'Cash game',
+    cashHint:
+      'On: buy in from your balance — busting does not end the game, you can rebuy. When you leave, your chips return to your balance (cash-out).',
+    cashHintOn: (buy) => `On: buy-in ${buy.toLocaleString()} 🪙 from your balance. Rebuy any time between hands, cash-out when you leave.`,
+    rebuyBtn: '➕ Rebuy',
+    rebuyDone: (n) => `Rebuy: +${n.toLocaleString()} 🪙`,
+    cashTag: 'Cash',
     blindInfo: (sb, bb, lvl) => `Blinds ${sb}/${bb} · Level ${lvl}`,
     nextBlindIn: (n) => ` · ↑ in ${n}`,
     createTable: 'Create new table',
@@ -256,6 +271,7 @@ const I18N = {
       matchOver: (e) => `Match over — ${e.name} wins!`,
       rematch: () => 'Rematch! Fresh stacks, fresh luck.',
       blindsUp: (e) => `⬆ Blinds rise to ${e.sb}/${e.bb} (level ${e.level}).`,
+      rebuy: (e) => `${e.name} rebuys: +${e.amount} 🪙.`,
     },
     rulesHtml: (flush) => `
       <p>10 animals valued from Rooster (10) to Horse (1000), 4 of each in the deck — one per colour.
@@ -301,7 +317,7 @@ let myCode = null;
 let lastState = null;
 let lastLobby = null;
 let raiseOpen = false;
-let createOpts = { maxPlayers: 6, flush: false, startingStack: 1000, tournament: false, levelHands: 6 };
+let createOpts = { maxPlayers: 6, flush: false, startingStack: 1000, tournament: false, levelHands: 6, cash: false };
 
 // ---------- Token / Raum ----------
 function getToken() {
@@ -378,6 +394,7 @@ function applyStatic() {
   });
   $('gameLangBtn').textContent = lang.toUpperCase();
   buildSidePanels(lastState ? lastState.flush : panelFlush);
+  if (typeof updateCashHint === 'function') updateCashHint();
   if (typeof renderProfile === 'function') renderProfile();
   if ($('leaderboardBox')?.open) loadLeaderboard();
   if (lastLobby) renderLobby(lastLobby);
@@ -413,6 +430,7 @@ $('stackSeg').addEventListener('click', (e) => {
   if (!b) return;
   createOpts.startingStack = +b.dataset.val;
   segActivate('stackSeg', b);
+  if (typeof updateCashHint === 'function') updateCashHint();
 });
 $('flushSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -427,7 +445,32 @@ $('tourneySeg').addEventListener('click', (e) => {
   createOpts.tournament = b.dataset.val === 'on';
   segActivate('tourneySeg', b);
   $('levelHandsRow').classList.toggle('hidden', !createOpts.tournament);
+  // Turnier und Cash-Game schliessen sich aus.
+  if (createOpts.tournament && createOpts.cash) {
+    createOpts.cash = false;
+    segActivate('cashSeg', $('cashSeg').querySelector('[data-val="off"]'));
+    updateCashHint();
+  }
 });
+const cashSeg = $('cashSeg');
+if (cashSeg) {
+  cashSeg.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    createOpts.cash = b.dataset.val === 'on';
+    segActivate('cashSeg', b);
+    updateCashHint();
+    if (createOpts.cash && createOpts.tournament) {
+      createOpts.tournament = false;
+      segActivate('tourneySeg', $('tourneySeg').querySelector('[data-val="off"]'));
+      $('levelHandsRow').classList.add('hidden');
+    }
+  });
+}
+function updateCashHint() {
+  const hint = $('cashHint');
+  if (hint) hint.textContent = createOpts.cash ? t('cashHintOn', createOpts.startingStack) : t('cashHint');
+}
 $('levelHandsSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (!b) return;
@@ -443,7 +486,7 @@ $('nameInput').value = localStorage.getItem('kuhpoker_name') || '';
 $('createBtn').onclick = () => {
   const name = $('nameInput').value.trim();
   localStorage.setItem('kuhpoker_name', name);
-  socket.emit('createRoom', { name, token: myToken, maxPlayers: createOpts.maxPlayers, flush: createOpts.flush, startingStack: createOpts.startingStack, tournament: createOpts.tournament, levelHands: createOpts.levelHands }, (res) => {
+  socket.emit('createRoom', { name, token: myToken, maxPlayers: createOpts.maxPlayers, flush: createOpts.flush, startingStack: createOpts.startingStack, tournament: createOpts.tournament, levelHands: createOpts.levelHands, cash: createOpts.cash }, (res) => {
     if (res?.error) return toast(res.error);
     rememberRoom(res.code);
   });
@@ -638,7 +681,12 @@ function renderBlindInfo(s) {
   const el = $('blindInfo');
   if (!el) return;
   const bl = s.blinds;
-  // Nur im Turniermodus anzeigen (Stufe/Anstieg). Sonst verstecken.
+  // Cash-Game: Buy-in-Hinweis. Sonst nur im Turniermodus (Stufe/Anstieg).
+  if (s.cash) {
+    el.textContent = `${t('cashTag')} · Buy-in ${(s.buyIn || 0).toLocaleString()} 🪙`;
+    el.classList.remove('hidden');
+    return;
+  }
   if (!bl || !bl.tournament) {
     el.classList.add('hidden');
     return;
@@ -1045,6 +1093,15 @@ function renderControls(s, me) {
   showBtn.classList.toggle('hidden', !canShow);
   if (canShow) showBtn.textContent = t('showCards');
 
+  // Cash-Game: Rebuy zwischen den Händen, wenn der Stack unter einen Buy-in fällt.
+  const rebuyBtn = $('rebuyBtn');
+  const canRebuy =
+    s.cash &&
+    (s.stage === 'idle' || s.stage === 'handover') &&
+    (s.myStack || 0) < (s.buyIn || 0);
+  rebuyBtn.classList.toggle('hidden', !canRebuy);
+  if (canRebuy) rebuyBtn.textContent = t('rebuyBtn');
+
   if (s.matchOver) {
     matchOver.classList.remove('hidden');
     $('matchOverText').textContent = s.matchWinnerId === me.id ? t('matchWon') : t('matchLost');
@@ -1188,6 +1245,12 @@ document.querySelectorAll('[data-quick]').forEach((b) => {
 $('nextHandBtn').onclick = () => socket.emit('startHand');
 $('showCardsBtn').onclick = () => socket.emit('showCards');
 $('rematchBtn').onclick = () => socket.emit('rematch');
+$('rebuyBtn').onclick = () => {
+  socket.emit('rebuy', {}, (res) => {
+    if (res?.error) return toast(res.error);
+    if (res?.amount) toast(t('rebuyDone', res.amount));
+  });
+};
 
 // ---------- Tastatur-Steuerung ----------
 // F = Fold, C = Check/Call, R = Raise oeffnen, Enter = bestaetigen/naechste Hand,
