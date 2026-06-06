@@ -4,6 +4,12 @@ import { Server } from 'socket.io';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { Table } from './src/poker.js';
+import {
+  loadProfile,
+  recordMatchWin,
+  getLeaderboard,
+  storeInfo,
+} from './src/store.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -27,8 +33,25 @@ const io = new Server(httpServer, {
 
 // Health-Endpoint fuer Uptime-Checks / Keepalive.
 app.get('/healthz', (_req, res) =>
-  res.json({ ok: true, rooms: rooms.size, uptime: Math.round(process.uptime()) })
+  res.json({ ok: true, rooms: rooms.size, uptime: Math.round(process.uptime()), store: storeInfo.backend })
 );
+
+// Leaderboard (Top-Spieler nach gewonnenen Matches).
+app.get('/api/leaderboard', async (_req, res) => {
+  try {
+    res.json({ ok: true, top: await getLeaderboard(10) });
+  } catch {
+    res.json({ ok: false, top: [] });
+  }
+});
+
+// Eigenes Profil (Wallet + Stats) anhand des Tokens.
+app.get('/api/profile', async (req, res) => {
+  const token = (req.query.token || '').toString();
+  if (!token) return res.json({ ok: false });
+  const p = await loadProfile(token);
+  res.json({ ok: true, profile: publicProfile(p) });
+});
 
 /**
  * Raum: { code, players: Seat[], table, cleanupTimer }
@@ -106,6 +129,42 @@ function broadcast(room) {
     if (room.table) io.to(p.socketId).emit('state', room.table.view(p.token));
     io.to(p.socketId).emit('lobby', lobbyState(room, p.token));
   }
+  checkMatchOver(room);
+}
+
+function publicProfile(p) {
+  return {
+    name: p.name,
+    wallet: p.wallet || 0,
+    matchesWon: p.matchesWon || 0,
+    handsWon: p.handsWon || 0,
+    biggestPot: p.biggestPot || 0,
+  };
+}
+
+// Laedt das Profil (Wallet+Stats) und schickt es an den Socket.
+async function sendProfile(socket, token, name) {
+  if (!token) return;
+  try {
+    const p = await loadProfile(token, name);
+    socket.emit('profile', publicProfile(p));
+  } catch (e) {
+    console.error('sendProfile:', e.message);
+  }
+}
+
+// Erkennt den Uebergang zu "Match beendet" und schreibt den Sieg dem Gewinner
+// genau einmal gut (Token == Engine-Spieler-Id). Reset passiert bei rematch.
+function checkMatchOver(room) {
+  if (!room.table?.matchOver || room.matchRecorded) return;
+  room.matchRecorded = true;
+  const winnerToken = room.table.matchWinnerId;
+  const seat = room.players.find((p) => p.token === winnerToken);
+  if (winnerToken) {
+    recordMatchWin(winnerToken, seat?.name).catch((e) =>
+      console.error('recordMatchWin:', e.message)
+    );
+  }
 }
 
 function cancelCleanup(room) {
@@ -150,12 +209,14 @@ io.on('connection', (socket) => {
       autoActTimer: null,
       autoActFor: null,
       chat: [],
+      matchRecorded: false,
     };
     rooms.set(code, room);
     socket.data.code = code;
     socket.join(code);
     cb?.({ ok: true, code });
     broadcast(room);
+    sendProfile(socket, token, cleanName(name));
   });
 
   socket.on('joinRoom', ({ code, name, token }, cb) => {
@@ -181,6 +242,7 @@ io.on('connection', (socket) => {
     cb?.({ ok: true, code });
     broadcast(room);
     sendChatHistory(socket, room);
+    sendProfile(socket, token, cleanName(name));
   });
 
   // Host startet das Spiel: erstellt den Tisch aus den aktuellen Spielern.
@@ -302,6 +364,7 @@ io.on('connection', (socket) => {
     cb?.({ ok: true, code });
     broadcast(room);
     sendChatHistory(socket, room);
+    sendProfile(socket, token, seat.name);
     // Reconnect: Auto-Act neu bewerten (ggf. Schonfrist abbrechen).
     scheduleAutoAct(room);
   });
@@ -324,6 +387,7 @@ io.on('connection', (socket) => {
     const room = rooms.get(socket.data.code);
     if (!room?.table) return;
     room.table.resetMatch();
+    room.matchRecorded = false;
     clearAutoAct(room);
     broadcast(room);
   });

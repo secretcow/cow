@@ -42,6 +42,44 @@ body {
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
 }
 .subtitle { color: var(--gold); margin-bottom: 22px; font-size: 0.95rem; }
+
+/* Profil-Leiste (Wallet + gewonnene Matches) */
+.profile-bar {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin: -8px 0 20px;
+}
+.profile-bar.hidden { display: none; }
+.pb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #e8e8e8;
+}
+.pb-icon { font-size: 1rem; }
+.pb-val { font-variant-numeric: tabular-nums; }
+
+/* Bestenliste */
+.leaderboard .lb-body { margin-top: 10px; }
+.lb-empty { color: #93a89c; font-size: 0.82rem; margin: 8px 0; }
+.lb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.lb-row:last-child { border-bottom: none; }
+.lb-rank { width: 28px; text-align: center; font-weight: 700; }
+.lb-name { flex: 1; font-weight: 600; color: #eee; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-matches { color: var(--gold); font-size: 0.82rem; font-variant-numeric: tabular-nums; }
 .lobby-card label { display: block; text-align: left; font-size: 0.85rem; color: #bbb; margin-bottom: 6px; }
 input { font: inherit; }
 #nameInput, .code-input {

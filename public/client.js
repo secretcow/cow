@@ -71,6 +71,11 @@ const I18N = {
     copyLink: 'Einladungslink kopieren',
     startGame: 'Spiel starten',
     rulesSummary: 'Spielregeln',
+    leaderboardTitle: '🏆 Bestenliste',
+    lbEmpty: 'Noch keine gewonnenen Matches.',
+    lbMatches: (n) => `${n} ${n === 1 ? 'Match' : 'Matches'}`,
+    walletTitle: 'Guthaben',
+    matchesTitle: 'Gewonnene Matches',
     ranksTitle: 'Rangfolge',
     cardsTitle: 'Karten',
     suitsTitle: 'Farben',
@@ -179,6 +184,11 @@ const I18N = {
     copyLink: 'Copy invite link',
     startGame: 'Start game',
     rulesSummary: 'Rules',
+    leaderboardTitle: '🏆 Leaderboard',
+    lbEmpty: 'No matches won yet.',
+    lbMatches: (n) => `${n} ${n === 1 ? 'match' : 'matches'}`,
+    walletTitle: 'Balance',
+    matchesTitle: 'Matches won',
     ranksTitle: 'Hand ranking',
     cardsTitle: 'Cards',
     suitsTitle: 'Suits',
@@ -368,6 +378,8 @@ function applyStatic() {
   });
   $('gameLangBtn').textContent = lang.toUpperCase();
   buildSidePanels(lastState ? lastState.flush : panelFlush);
+  if (typeof renderProfile === 'function') renderProfile();
+  if ($('leaderboardBox')?.open) loadLeaderboard();
   if (lastLobby) renderLobby(lastLobby);
   if (lastState) render(lastState);
 }
@@ -509,6 +521,51 @@ socket.on('state', (s) => {
   render(s);
 });
 socket.on('errorMsg', (msg) => toast(msg));
+
+// ---------- Profil (Wallet/Statistik) ----------
+let myProfile = null;
+socket.on('profile', (p) => {
+  myProfile = p;
+  renderProfile();
+});
+function renderProfile() {
+  const bar = $('profileBar');
+  if (!bar) return;
+  if (!myProfile) {
+    bar.classList.add('hidden');
+    return;
+  }
+  bar.classList.remove('hidden');
+  $('pbWallet').textContent = (myProfile.wallet ?? 0).toLocaleString();
+  $('pbMatches').textContent = myProfile.matchesWon ?? 0;
+  $('pbWallet').parentElement.title = t('walletTitle');
+  $('pbMatches').parentElement.title = t('matchesTitle');
+}
+
+// ---------- Bestenliste ----------
+async function loadLeaderboard() {
+  const body = $('leaderboardBody');
+  if (!body) return;
+  try {
+    const res = await fetch('/api/leaderboard');
+    const data = await res.json();
+    const top = ((data && data.top) || []).filter((r) => (r.matchesWon || 0) > 0);
+    if (!top.length) {
+      body.innerHTML = `<p class="lb-empty">${escapeHtml(t('lbEmpty'))}</p>`;
+      return;
+    }
+    body.innerHTML = top
+      .map((r, i) => {
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+        return `<div class="lb-row"><span class="lb-rank">${medal}</span><span class="lb-name">${escapeHtml(r.name || 'Spieler')}</span><span class="lb-matches">${escapeHtml(t('lbMatches', r.matchesWon || 0))}</span></div>`;
+      })
+      .join('');
+  } catch {
+    body.innerHTML = `<p class="lb-empty">${escapeHtml(t('lbEmpty'))}</p>`;
+  }
+}
+const lbBox = $('leaderboardBox');
+if (lbBox) lbBox.addEventListener('toggle', () => { if (lbBox.open) loadLeaderboard(); });
 
 // ---------- Tisch-Chat ----------
 let chatMsgs = [];
@@ -1223,6 +1280,17 @@ function escapeHtml(s) {
 
 // Initiale Übersetzung
 applyStatic();
+
+// Profil beim Start laden (Wallet/Statistik in der Lobby anzeigen).
+fetch(`/api/profile?token=${encodeURIComponent(myToken)}`)
+  .then((r) => r.json())
+  .then((d) => {
+    if (d && d.ok && d.profile) {
+      myProfile = d.profile;
+      renderProfile();
+    }
+  })
+  .catch(() => {});
 
 // Referenz-Panels auf breiten Bildschirmen direkt offen zeigen.
 if (window.innerWidth >= 1200) {

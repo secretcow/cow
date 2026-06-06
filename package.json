@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node src/handEval.test.js && node src/handEvalFlush.test.js && node src/poker.test.js && node src/pokerMulti.test.js"
+    "test": "node src/handEval.test.js && node src/handEvalFlush.test.js && node src/poker.test.js && node src/pokerMulti.test.js && node src/store.test.js"
   },
   "engines": {
     "node": ">=18"

@@ -17,6 +17,11 @@
         <h1 class="logo">🐄 KuhPoker</h1>
         <p class="subtitle" data-i18n="subtitle"></p>
 
+        <div class="profile-bar hidden" id="profileBar">
+          <span class="pb-item"><span class="pb-icon">💰</span><span class="pb-val" id="pbWallet">–</span></span>
+          <span class="pb-item"><span class="pb-icon">🏆</span><span class="pb-val" id="pbMatches">0</span></span>
+        </div>
+
         <label data-i18n="yourName"></label>
         <input id="nameInput" maxlength="16" />
 
@@ -84,6 +89,11 @@
           <button id="startGameBtn" class="btn primary hidden" data-i18n="startGame"></button>
           <p class="hint" id="waitHint"></p>
         </div>
+
+        <details class="rules leaderboard" id="leaderboardBox">
+          <summary data-i18n="leaderboardTitle"></summary>
+          <div id="leaderboardBody" class="lb-body"></div>
+        </details>
 
         <details class="rules">
           <summary data-i18n="rulesSummary"></summary>
