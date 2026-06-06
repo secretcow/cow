@@ -11,7 +11,24 @@ const app = express();
 app.use(express.static(join(__dirname, 'public')));
 
 const httpServer = createServer(app);
-const io = new Server(httpServer);
+const io = new Server(httpServer, {
+  // Toleranter bei kurzen Netzaussetzern (Mobilfunk, WLAN-Wechsel): erst nach
+  // 60 s ohne Pong gilt die Verbindung als tot statt nach den Default-20 s.
+  pingInterval: 25000,
+  pingTimeout: 60000,
+  // Stellt die Session nach einem kurzen Verbindungsabriss transparent wieder
+  // her und liefert verpasste Events nach – der Spieler bemerkt das Flackern oft
+  // gar nicht und bleibt im selben Raum/Sitz.
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000,
+    skipMiddlewares: true,
+  },
+});
+
+// Health-Endpoint fuer Uptime-Checks / Keepalive.
+app.get('/healthz', (_req, res) =>
+  res.json({ ok: true, rooms: rooms.size, uptime: Math.round(process.uptime()) })
+);
 
 /**
  * Raum: { code, players: Seat[], table, cleanupTimer }
@@ -26,7 +43,7 @@ const CHAT_HISTORY = 60; // gespeicherte Chat-Nachrichten pro Raum
 // Schonfrist, bevor ein getrennter Spieler, der am Zug ist, automatisch
 // checkt/foldet. Verhindert, dass die Hand bei Verbindungsverlust ewig haengt,
 // gibt aber Zeit fuer einen kurzen Reconnect.
-const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS ?? 20000);
+const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS ?? 30000);
 
 function makeCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -376,3 +393,17 @@ const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, () => {
   console.log(`KuhPoker laeuft auf http://localhost:${PORT}`);
 });
+
+// Keepalive: Render & aehnliche Free-Tier-Hoster fahren den Dienst nach ~15 Min
+// ohne eingehende HTTP-Anfragen herunter – dann brechen alle WebSockets ab und
+// der naechste Request hat einen langen Kaltstart. Ein periodischer Selbst-Ping
+// haelt den Dienst wach. Aktiv, sobald eine Ziel-URL bekannt ist
+// (KEEPALIVE_URL oder von Render gesetztes RENDER_EXTERNAL_URL).
+const KEEPALIVE_URL =
+  process.env.KEEPALIVE_URL ||
+  (process.env.RENDER_EXTERNAL_URL ? `${process.env.RENDER_EXTERNAL_URL.replace(/\/$/, '')}/healthz` : null);
+if (KEEPALIVE_URL && typeof fetch === 'function') {
+  const ping = () => fetch(KEEPALIVE_URL).catch(() => {});
+  setInterval(ping, 10 * 60 * 1000).unref();
+  console.log(`Keepalive aktiv -> ${KEEPALIVE_URL} (alle 10 Min)`);
+}

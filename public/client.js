@@ -1,5 +1,13 @@
 /* global io */
-const socket = io();
+const socket = io({
+  // Unbegrenzt automatisch neu verbinden, mit kurzem Start- und gedeckeltem
+  // Maximal-Backoff – so kehrt der Client nach einem Aussetzer schnell zurueck.
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 500,
+  reconnectionDelayMax: 4000,
+  timeout: 20000,
+});
 
 // ---------- Daten ----------
 const ANIMALS = {
@@ -73,6 +81,8 @@ const I18N = {
     connected: '● verbunden',
     someoneOff: '● Spieler getrennt – warte auf Reconnect',
     waitingPlayers: '● warte auf Spieler',
+    reconnecting: '● Verbindung verloren – verbinde neu…',
+    reconnected: '✓ Wieder verbunden',
     pot: (n) => `Pot: ${n} 🪙`,
     stages: { idle: 'Bereit', preflop: 'Pre-Flop', flop: 'Flop', turn: 'Turn', river: 'River', showdown: 'Showdown', handover: 'Hand vorbei' },
     yourTurn: 'Du bist am Zug',
@@ -172,6 +182,8 @@ const I18N = {
     connected: '● connected',
     someoneOff: '● player disconnected – waiting for reconnect',
     waitingPlayers: '● waiting for players',
+    reconnecting: '● connection lost – reconnecting…',
+    reconnected: '✓ Reconnected',
     pot: (n) => `Pot: ${n} 🪙`,
     stages: { idle: 'Ready', preflop: 'Pre-Flop', flop: 'Flop', turn: 'Turn', river: 'River', showdown: 'Showdown', handover: 'Hand over' },
     yourTurn: "It's your turn",
@@ -413,7 +425,27 @@ $('copyLinkBtn').onclick = () => {
   navigator.clipboard?.writeText(link).then(() => toast(t('linkCopied')), () => toast(link));
 };
 
+// Verbindungsstatus: zeigt im Spiel an, wenn die Verbindung kurz weg ist, und
+// blendet nach dem Reconnect eine kurze Bestaetigung ein. connLost ueberschreibt
+// die normale Statusanzeige, damit der Spieler nicht glaubt, er sei rausgeflogen.
+let connLost = false;
+function updateConnBanner() {
+  const el = $('connStatus');
+  if (!el) return;
+  if (connLost) {
+    el.textContent = t('reconnecting');
+    el.className = 'conn off';
+  } else if (lastLobby) {
+    renderConnStatus(lastLobby);
+  }
+}
+
 socket.on('connect', () => {
+  if (connLost) {
+    connLost = false;
+    toast(t('reconnected'));
+    updateConnBanner();
+  }
   const code = localStorage.getItem('kuhpoker_code');
   if (!code) return;
   socket.emit('resume', { code, token: myToken }, (res) => {
@@ -423,6 +455,17 @@ socket.on('connect', () => {
       $('lobby').classList.remove('hidden');
     }
   });
+});
+
+socket.on('disconnect', (reason) => {
+  // "io client disconnect" = bewusstes Trennen (Verlassen) – kein Hinweis noetig.
+  if (reason === 'io client disconnect') return;
+  connLost = true;
+  updateConnBanner();
+});
+socket.io.on('reconnect_attempt', () => {
+  connLost = true;
+  updateConnBanner();
 });
 
 const urlCode = new URLSearchParams(location.search).get('code');
@@ -509,6 +552,12 @@ function renderLobby(lob) {
 
 function renderConnStatus(lob) {
   const el = $('connStatus');
+  // Eigener Verbindungsabriss hat Vorrang vor dem Status der Mitspieler.
+  if (connLost) {
+    el.textContent = t('reconnecting');
+    el.className = 'conn off';
+    return;
+  }
   const off = lob.players.filter((p) => !p.connected);
   if (off.length > 0) {
     el.textContent = t('someoneOff');
