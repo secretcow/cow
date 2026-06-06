@@ -33,6 +33,15 @@
               </div>
             </div>
             <div class="opt-row">
+              <span data-i18n="startChips"></span>
+              <div class="seg" id="stackSeg">
+                <button data-val="500">500</button>
+                <button data-val="1000" class="active">1000</button>
+                <button data-val="2000">2000</button>
+                <button data-val="5000">5000</button>
+              </div>
+            </div>
+            <div class="opt-row">
               <span data-i18n="flushMode"></span>
               <div class="seg" id="flushSeg">
                 <button data-val="off" class="active" data-i18n="off"></button>
@@ -73,10 +82,27 @@
         <span class="topcode" id="topCode"></span>
         <div class="top-actions">
           <button class="lang-btn small-lang" id="gameLangBtn">DE</button>
+          <button id="ranksBtn" class="btn small" title="Rangfolge">📊</button>
+          <button id="cardsBtn" class="btn small" title="Karten">🃏</button>
           <button id="muteBtn" class="btn small" title="Ton">🔊</button>
           <button id="leaveBtn" class="btn small" title="Verlassen">🚪</button>
         </div>
       </div>
+
+      <aside class="side-panel left collapsed" id="rankPanel">
+        <div class="side-head">
+          <span data-i18n="ranksTitle"></span>
+          <button class="side-close" data-panel="rankPanel">✕</button>
+        </div>
+        <div class="side-body" id="rankBody"></div>
+      </aside>
+      <aside class="side-panel right collapsed" id="cardPanel">
+        <div class="side-head">
+          <span data-i18n="cardsTitle"></span>
+          <button class="side-close" data-panel="cardPanel">✕</button>
+        </div>
+        <div class="side-body" id="cardBody"></div>
+      </aside>
 
       <div class="table">
         <div class="seats" id="seats"></div>
@@ -85,12 +111,12 @@
           <div class="community" id="community"></div>
           <div class="stage-label" id="stageLabel"></div>
           <div class="result-banner hidden" id="resultBanner"></div>
+          <div class="result-detail hidden" id="resultDetail"></div>
         </div>
       </div>
 
       <!-- Aktionen -->
       <div class="controls" id="controls">
-        <div class="my-hand hidden" id="myHandLabel"></div>
         <div class="turn-indicator" id="turnIndicator"></div>
         <div class="action-buttons hidden" id="actionButtons">
           <button class="btn act" data-act="fold" id="foldBtn"></button>

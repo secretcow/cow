@@ -43,6 +43,7 @@ const I18N = {
     yourName: 'Dein Name',
     namePlaceholder: 'z. B. Anna',
     maxPlayers: 'Max. Spieler',
+    startChips: 'Start-Chips',
     flushMode: 'Flush-Modus',
     on: 'An',
     off: 'Aus',
@@ -56,6 +57,11 @@ const I18N = {
     copyLink: 'Einladungslink kopieren',
     startGame: 'Spiel starten',
     rulesSummary: 'Spielregeln',
+    ranksTitle: 'Rangfolge',
+    cardsTitle: 'Karten',
+    suitsTitle: 'Farben',
+    strong: 'stark',
+    weak: 'schwach',
     enterCode: 'Bitte einen Code eingeben.',
     linkCopied: 'Link kopiert!',
     waitMore: 'Warte auf weitere Spieler …',
@@ -97,6 +103,10 @@ const I18N = {
     youWin: (n) => `Du gewinnst ${n} 🪙!`,
     splitPot: (n) => `Split Pot — ${n} 🪙 geteilt`,
     playerWins: (name, n) => `${name} gewinnt ${n} 🪙`,
+    wonWith: 'Gewonnen mit',
+    mainPot: 'Hauptpot',
+    sidePot: (n) => `Side-Pot ${n}`,
+    potWinners: 'Gewinner',
     allInTag: 'All-In',
     outTag: 'raus',
     // Log
@@ -132,6 +142,7 @@ const I18N = {
     yourName: 'Your name',
     namePlaceholder: 'e.g. Anna',
     maxPlayers: 'Max players',
+    startChips: 'Starting chips',
     flushMode: 'Flush mode',
     on: 'On',
     off: 'Off',
@@ -145,6 +156,11 @@ const I18N = {
     copyLink: 'Copy invite link',
     startGame: 'Start game',
     rulesSummary: 'Rules',
+    ranksTitle: 'Hand ranking',
+    cardsTitle: 'Cards',
+    suitsTitle: 'Suits',
+    strong: 'strong',
+    weak: 'weak',
     enterCode: 'Please enter a code.',
     linkCopied: 'Link copied!',
     waitMore: 'Waiting for more players …',
@@ -186,6 +202,10 @@ const I18N = {
     youWin: (n) => `You win ${n} 🪙!`,
     splitPot: (n) => `Split pot — ${n} 🪙 shared`,
     playerWins: (name, n) => `${name} wins ${n} 🪙`,
+    wonWith: 'Won with',
+    mainPot: 'Main pot',
+    sidePot: (n) => `Side pot ${n}`,
+    potWinners: 'Winners',
     allInTag: 'All-In',
     outTag: 'out',
     log: {
@@ -238,11 +258,14 @@ function catName(l, code, flush) {
 }
 
 const $ = (id) => document.getElementById(id);
+function withHotkey(label, key) {
+  return `${escapeHtml(label)}<kbd class="hk">${escapeHtml(key)}</kbd>`;
+}
 let myCode = null;
 let lastState = null;
 let lastLobby = null;
 let raiseOpen = false;
-let createOpts = { maxPlayers: 6, flush: false };
+let createOpts = { maxPlayers: 6, flush: false, startingStack: 1000 };
 
 // ---------- Token / Raum ----------
 function getToken() {
@@ -263,6 +286,44 @@ function forgetRoom() {
   localStorage.removeItem('kuhpoker_code');
 }
 
+// ---------- Referenz-Panels (Rangfolge links, Karten rechts) ----------
+let panelFlush = false; // zuletzt bekannter Flush-Modus fuer das Rangfolge-Panel
+function buildSidePanels(flush) {
+  panelFlush = !!flush;
+  const rankBody = $('rankBody');
+  if (rankBody) {
+    const codes = flush ? [10, 9, 8, 7, 6, 5, 4, 3, 2] : [8, 7, 6, 5, 4, 3, 2];
+    rankBody.innerHTML =
+      `<div class="rank-scale"><span>${t('strong')}</span><span>${t('weak')}</span></div>` +
+      codes
+        .map(
+          (c, i) =>
+            `<div class="rank-row"><span class="rank-no">${i + 1}</span><span class="rank-name">${escapeHtml(catName(lang, c, flush))}</span></div>`
+        )
+        .join('');
+  }
+  const cardBody = $('cardBody');
+  if (cardBody) {
+    const animals = Object.keys(ANIMALS)
+      .map(Number)
+      .sort((a, b) => b - a) // Pferd (1000) oben, Hahn (10) unten
+      .map((r) => {
+        const a = ANIMALS[r];
+        return `<div class="cardref-row"><span class="cardref-emoji">${a.emoji}</span><span class="cardref-name">${escapeHtml(a[lang])}</span><span class="cardref-val">${a.value}</span></div>`;
+      })
+      .join('');
+    const suits = SUITS.map(
+      (s) => `<span class="suit-chip" style="color:${s.color}">${s.symbol} ${escapeHtml(s[lang])}</span>`
+    ).join('');
+    cardBody.innerHTML =
+      animals + `<div class="cardref-suits"><div class="cardref-suits-title">${t('suitsTitle')}</div>${suits}</div>`;
+  }
+}
+function togglePanel(id) {
+  const el = $(id);
+  if (el) el.classList.toggle('collapsed');
+}
+
 // ---------- Statische Übersetzung anwenden ----------
 function applyStatic() {
   document.documentElement.lang = lang;
@@ -280,6 +341,7 @@ function applyStatic() {
     b.classList.toggle('active', b.dataset.lang === lang);
   });
   $('gameLangBtn').textContent = lang.toUpperCase();
+  buildSidePanels(lastState ? lastState.flush : panelFlush);
   if (lastLobby) renderLobby(lastLobby);
   if (lastState) render(lastState);
 }
@@ -294,12 +356,25 @@ document.querySelectorAll('.lang-btn[data-lang]').forEach((b) => {
 });
 $('gameLangBtn').onclick = () => setLang(lang === 'de' ? 'en' : 'de');
 
+// Referenz-Panels ein-/ausklappen.
+$('ranksBtn').onclick = () => togglePanel('rankPanel');
+$('cardsBtn').onclick = () => togglePanel('cardPanel');
+document.querySelectorAll('.side-close').forEach((b) => {
+  b.onclick = () => togglePanel(b.dataset.panel);
+});
+
 // ---------- Lobby-Optionen ----------
 $('maxPlayersSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (!b) return;
   createOpts.maxPlayers = +b.dataset.val;
   segActivate('maxPlayersSeg', b);
+});
+$('stackSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  createOpts.startingStack = +b.dataset.val;
+  segActivate('stackSeg', b);
 });
 $('flushSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -317,7 +392,7 @@ $('nameInput').value = localStorage.getItem('kuhpoker_name') || '';
 $('createBtn').onclick = () => {
   const name = $('nameInput').value.trim();
   localStorage.setItem('kuhpoker_name', name);
-  socket.emit('createRoom', { name, token: myToken, maxPlayers: createOpts.maxPlayers, flush: createOpts.flush }, (res) => {
+  socket.emit('createRoom', { name, token: myToken, maxPlayers: createOpts.maxPlayers, flush: createOpts.flush, startingStack: createOpts.startingStack }, (res) => {
     if (res?.error) return toast(res.error);
     rememberRoom(res.code);
   });
@@ -525,8 +600,16 @@ function cardEl(card) {
   return el;
 }
 
+function miniCardHtml(c) {
+  if (!c) return '';
+  const a = ANIMALS[c.rank];
+  const suit = SUITS[c.suit ?? c.copy ?? 0];
+  return `<span class="mini-card" style="--suit:${suit.color}"><span class="mini-emoji">${a.emoji}</span><span class="mini-val">${a.value}</span><span class="mini-suit">${suit.symbol}</span></span>`;
+}
+
 function render(s) {
   const me = s.players[s.meIdx];
+  if (s.flush !== panelFlush) buildSidePanels(s.flush);
   const handChanged = s.handNo !== prevHandNo;
   const communityGrew = s.community.length > prevCommunityCount;
   newCardKeys = new Set();
@@ -564,7 +647,6 @@ function render(s) {
 
   renderResult(s, me);
   renderControls(s, me);
-  renderMyHand(s);
   renderLog(s.log);
 
   if (lastLobby) renderConnStatus(lastLobby);
@@ -670,6 +752,19 @@ function buildSeat(s, p, isMe, animate, revealAnim) {
     }
   }
 
+  // Live-Handstaerke (nur fuer mich, waehrend des Setzens): Balken + Kategorie unter dem Namen.
+  let strength = null;
+  if (isMe && s.myHand && s.myHand.cat) {
+    const maxCat = s.flush ? 10 : 8;
+    const frac = Math.max(0.08, Math.min(1, (s.myHand.cat - 2) / (maxCat - 2)));
+    const hue = Math.round(frac * 130); // rot (schwach) -> gruen (stark)
+    strength = document.createElement('div');
+    strength.className = 'strength';
+    strength.innerHTML =
+      `<div class="strength-bar"><div class="strength-fill" style="width:${Math.round(frac * 100)}%;background:hsl(${hue},72%,46%)"></div></div>` +
+      `<span class="strength-cat">${escapeHtml(catName(lang, s.myHand.cat, s.flush))}</span>`;
+  }
+
   // Hand-Label (Showdown)
   const label = document.createElement('div');
   label.className = 'hand-label hidden';
@@ -685,6 +780,7 @@ function buildSeat(s, p, isMe, animate, revealAnim) {
     seat.appendChild(label);
     if (equity) seat.appendChild(equity);
     seat.appendChild(info);
+    if (strength) seat.appendChild(strength);
   } else {
     seat.appendChild(hole);
     seat.appendChild(bet);
@@ -716,6 +812,7 @@ function renderCommunity(s) {
 
 function renderResult(s, me) {
   const banner = $('resultBanner');
+  const detail = $('resultDetail');
   if (s.stage === 'handover' && s.result) {
     banner.classList.remove('hidden', 'win', 'lose');
     const myWin = s.result.winnings?.find((w) => w.i === s.meIdx)?.amount || 0;
@@ -730,8 +827,51 @@ function renderResult(s, me) {
       banner.textContent = t('playerWins', name, s.result.pot);
       banner.classList.add('lose');
     }
+    renderResultDetail(s, detail);
   } else {
     banner.classList.add('hidden');
+    if (detail) detail.classList.add('hidden');
+  }
+}
+
+function renderResultDetail(s, detail) {
+  if (!detail) return;
+  const parts = [];
+
+  // (6) Gewinnhand fett anzeigen, wenn Karten gezeigt wurden (Showdown oder freiwilliges Zeigen)
+  const reveal = s.result.reveal || [];
+  const winnerReveals = reveal.filter(
+    (r) => s.result.winners.includes(r.i) && r.eval && r.eval.cards && !r.folded
+  );
+  for (const r of winnerReveals) {
+    const name = s.players[r.i]?.name || '?';
+    const cat = catName(lang, r.eval.score?.[0] ?? r.eval.cat, s.flush);
+    const cards = r.eval.cards.map(miniCardHtml).join('');
+    parts.push(
+      `<div class="win-hand"><div class="win-hand-head">${escapeHtml(name)} — <span class="win-hand-cat">${escapeHtml(cat)}</span></div><div class="win-hand-cards">${cards}</div></div>`
+    );
+  }
+
+  // (5) Split-Pot-Aufschluesselung bei mehreren Pots
+  const pots = s.result.pots || [];
+  if (pots.length > 1) {
+    const rows = pots
+      .map((p, idx) => {
+        const label = idx === 0 ? t('mainPot') : t('sidePot', idx);
+        const names = (p.winners || [])
+          .map((w) => s.players[w]?.name || '?')
+          .join(', ');
+        return `<div class="pot-row"><span class="pot-name">${escapeHtml(label)}</span><span class="pot-amt">${p.amount} 🪙</span><span class="pot-win">${escapeHtml(names)}</span></div>`;
+      })
+      .join('');
+    parts.push(`<div class="pot-breakdown"><div class="pot-bd-title">${t('potWinners')}</div>${rows}</div>`);
+  }
+
+  if (parts.length) {
+    detail.innerHTML = parts.join('');
+    detail.classList.remove('hidden');
+  } else {
+    detail.classList.add('hidden');
   }
 }
 
@@ -767,7 +907,7 @@ function renderControls(s, me) {
 
   if (s.stage === 'idle' || s.stage === 'handover') {
     nextBtn.classList.remove('hidden');
-    nextBtn.textContent = s.stage === 'idle' ? t('firstHand') : t('nextHand');
+    nextBtn.innerHTML = withHotkey(s.stage === 'idle' ? t('firstHand') : t('nextHand'), '⏎');
     actionButtons.classList.add('hidden');
     raisePanel.classList.add('hidden');
     turnInd.textContent = '';
@@ -776,7 +916,7 @@ function renderControls(s, me) {
   }
   nextBtn.classList.add('hidden');
 
-  $('foldBtn').textContent = t('fold');
+  $('foldBtn').innerHTML = withHotkey(t('fold'), 'F');
 
   if (s.yourTurn && s.actions) {
     turnInd.textContent = t('yourTurn');
@@ -784,14 +924,14 @@ function renderControls(s, me) {
     const a = s.actions;
     const ccBtn = $('checkCallBtn');
     if (a.canCheck) {
-      ccBtn.textContent = t('check');
+      ccBtn.innerHTML = withHotkey(t('check'), 'C');
       ccBtn.dataset.act = 'check';
     } else {
-      ccBtn.textContent = t('call', a.toCall);
+      ccBtn.innerHTML = withHotkey(t('call', a.toCall), 'C');
       ccBtn.dataset.act = 'call';
     }
     $('raiseBtn').classList.toggle('hidden', !a.canRaise);
-    $('raiseBtn').textContent = a.canCheck ? t('bet') : t('raise');
+    $('raiseBtn').innerHTML = withHotkey(a.canCheck ? t('bet') : t('raise'), 'R');
 
     if (raiseOpen && a.canRaise) {
       actionButtons.classList.add('hidden');
@@ -835,18 +975,6 @@ function clampRaise(v) {
   if (!Number.isFinite(n)) n = a ? a.minRaiseTo : 0;
   if (a) n = Math.max(a.minRaiseTo, Math.min(a.maxRaiseTo, n));
   return n;
-}
-
-// Live-Handstaerke: zeigt, was ich aktuell als beste Hand halte (Paar, Zwei Paare …).
-function renderMyHand(s) {
-  const el = $('myHandLabel');
-  if (!el) return;
-  if (s.myHand && s.myHand.cat) {
-    el.innerHTML = `<span class="mh-label">${escapeHtml(t('myHandTitle'))}</span> <span class="mh-cat">${escapeHtml(catName(lang, s.myHand.cat, s.flush))}</span>`;
-    el.classList.remove('hidden');
-  } else {
-    el.classList.add('hidden');
-  }
 }
 
 function renderLog(log) {
@@ -910,6 +1038,65 @@ $('nextHandBtn').onclick = () => socket.emit('startHand');
 $('showCardsBtn').onclick = () => socket.emit('showCards');
 $('rematchBtn').onclick = () => socket.emit('rematch');
 
+// ---------- Tastatur-Steuerung ----------
+// F = Fold, C = Check/Call, R = Raise oeffnen, Enter = bestaetigen/naechste Hand,
+// Esc = Raise abbrechen. Inaktiv, solange ein Eingabefeld (z. B. Chat) fokussiert ist.
+function isTyping() {
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+}
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if ($('game').classList.contains('hidden')) return;
+  const s = lastState;
+  if (!s) return;
+
+  // Raise-Panel offen: Enter bestaetigt, Esc bricht ab.
+  if (raiseOpen) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      $('raiseCancel').click();
+    } else if (e.key === 'Enter' && !isTyping()) {
+      e.preventDefault();
+      $('raiseConfirm').click();
+    }
+    return;
+  }
+
+  if (isTyping()) return;
+
+  // Naechste Hand / erste Hand mit Enter starten.
+  if (e.key === 'Enter') {
+    if (!$('nextHandBtn').classList.contains('hidden')) {
+      e.preventDefault();
+      $('nextHandBtn').click();
+    } else if (!$('rematchBtn').closest('#matchOver').classList.contains('hidden')) {
+      e.preventDefault();
+      $('rematchBtn').click();
+    }
+    return;
+  }
+
+  if (!s.yourTurn || !s.actions) return;
+  const a = s.actions;
+  const k = e.key.toLowerCase();
+  if (k === 'f') {
+    e.preventDefault();
+    socket.emit('action', { type: 'fold' });
+  } else if (k === 'c') {
+    e.preventDefault();
+    socket.emit('action', { type: a.canCheck ? 'check' : 'call' });
+  } else if (k === 'r') {
+    if (a.canRaise) {
+      e.preventDefault();
+      raiseOpen = true;
+      render(lastState);
+    }
+  }
+});
+
 // Tisch verlassen -> zurueck zur Lobby. Loescht den gemerkten Raum, damit kein
 // automatisches Resume beim naechsten Laden passiert.
 $('leaveBtn').onclick = () => {
@@ -942,3 +1129,9 @@ function escapeHtml(s) {
 
 // Initiale Übersetzung
 applyStatic();
+
+// Referenz-Panels auf breiten Bildschirmen direkt offen zeigen.
+if (window.innerWidth >= 1200) {
+  $('rankPanel').classList.remove('collapsed');
+  $('cardPanel').classList.remove('collapsed');
+}

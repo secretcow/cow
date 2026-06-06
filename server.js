@@ -48,12 +48,21 @@ function clampMaxPlayers(v) {
   return Math.max(2, Math.min(6, n));
 }
 
+const STACK_PRESETS = [500, 1000, 2000, 5000];
+function clampStack(v) {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n)) return 1000;
+  // Auf das naechstgelegene Preset einrasten (Lobby bietet feste Stufen an).
+  return STACK_PRESETS.reduce((best, p) => (Math.abs(p - n) < Math.abs(best - n) ? p : best), 1000);
+}
+
 function lobbyState(room, forToken) {
   const connectedCount = room.players.filter((p) => p.connected).length;
   return {
     code: room.code,
     maxPlayers: room.maxPlayers,
     flush: room.flush,
+    startingStack: room.startingStack,
     started: !!room.table,
     players: room.players.map((p, i) => ({
       name: p.name,
@@ -98,13 +107,14 @@ function sendChatHistory(socket, room) {
 io.on('connection', (socket) => {
   socket.data.code = null;
 
-  socket.on('createRoom', ({ name, token, maxPlayers, flush }, cb) => {
+  socket.on('createRoom', ({ name, token, maxPlayers, flush, startingStack }, cb) => {
     if (!token) return cb?.({ error: 'Kein Spieler-Token.' });
     const code = makeCode();
     const room = {
       code,
       maxPlayers: clampMaxPlayers(maxPlayers),
       flush: !!flush,
+      startingStack: clampStack(startingStack),
       players: [{ token, name: cleanName(name), socketId: socket.id, connected: true }],
       table: null,
       cleanupTimer: null,
@@ -152,7 +162,7 @@ io.on('connection', (socket) => {
     if (seated.length < 2) return;
     room.table = new Table(
       room.players.map((p) => ({ id: p.token, name: p.name })),
-      { flush: room.flush }
+      { flush: room.flush, startingStack: room.startingStack }
     );
     // Server deckt All-In-Run-outs zeitversetzt auf (TV-Poker-Stil).
     room.table.autoRunout = false;

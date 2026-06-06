@@ -59,10 +59,12 @@ export class Table {
     }
 
     this.flush = !!opts.flush;
+    const ss = Math.floor(Number(opts.startingStack));
+    this.startingStack = Number.isFinite(ss) && ss > 0 ? ss : STARTING_STACK;
     this.players = playerDefs.map((p) => ({
       id: p.id,
       name: p.name,
-      stack: STARTING_STACK,
+      stack: this.startingStack,
       hole: [],
       bet: 0, // Einsatz in der aktuellen Setzrunde
       committed: 0, // Einsatz insgesamt in dieser Hand
@@ -108,7 +110,7 @@ export class Table {
 
   resetMatch() {
     for (const p of this.players) {
-      p.stack = STARTING_STACK;
+      p.stack = this.startingStack;
       p.hole = [];
       p.bet = 0;
       p.committed = 0;
@@ -645,6 +647,7 @@ export class Table {
           (i) => compareScores(evalMap.get(i).score, best) === 0
         );
       }
+      pot.winners = [...winners]; // pro Pot festhalten (fuer Split-Pot-Anzeige)
 
       // Aufteilen, ungerade Chips an die ersten Sitze links vom Button.
       const ordered = [...winners].sort(
@@ -689,7 +692,7 @@ export class Table {
       winners: [...winnings.keys()],
       winnings: [...winnings.entries()].map(([i, amount]) => ({ i, amount })),
       pot: totalPot,
-      pots: pots.map((p) => ({ amount: p.amount, eligible: p.eligible })),
+      pots: pots.map((p) => ({ amount: p.amount, eligible: p.eligible, winners: p.winners || [] })),
       reveal:
         reason === 'showdown'
           ? this.players.map((p, i) => ({
