@@ -73,6 +73,13 @@ function clampStack(v) {
   return STACK_PRESETS.reduce((best, p) => (Math.abs(p - n) < Math.abs(best - n) ? p : best), 1000);
 }
 
+const LEVEL_HANDS_PRESETS = [4, 6, 8, 10];
+function clampLevelHands(v) {
+  const n = Math.floor(Number(v));
+  if (!Number.isFinite(n)) return 6;
+  return LEVEL_HANDS_PRESETS.reduce((best, p) => (Math.abs(p - n) < Math.abs(best - n) ? p : best), 6);
+}
+
 function lobbyState(room, forToken) {
   const connectedCount = room.players.filter((p) => p.connected).length;
   return {
@@ -80,6 +87,8 @@ function lobbyState(room, forToken) {
     maxPlayers: room.maxPlayers,
     flush: room.flush,
     startingStack: room.startingStack,
+    tournament: room.tournament,
+    levelHands: room.levelHands,
     started: !!room.table,
     players: room.players.map((p, i) => ({
       name: p.name,
@@ -124,7 +133,7 @@ function sendChatHistory(socket, room) {
 io.on('connection', (socket) => {
   socket.data.code = null;
 
-  socket.on('createRoom', ({ name, token, maxPlayers, flush, startingStack }, cb) => {
+  socket.on('createRoom', ({ name, token, maxPlayers, flush, startingStack, tournament, levelHands }, cb) => {
     if (!token) return cb?.({ error: 'Kein Spieler-Token.' });
     const code = makeCode();
     const room = {
@@ -132,6 +141,8 @@ io.on('connection', (socket) => {
       maxPlayers: clampMaxPlayers(maxPlayers),
       flush: !!flush,
       startingStack: clampStack(startingStack),
+      tournament: !!tournament,
+      levelHands: clampLevelHands(levelHands),
       players: [{ token, name: cleanName(name), socketId: socket.id, connected: true }],
       table: null,
       cleanupTimer: null,
@@ -179,7 +190,12 @@ io.on('connection', (socket) => {
     if (seated.length < 2) return;
     room.table = new Table(
       room.players.map((p) => ({ id: p.token, name: p.name })),
-      { flush: room.flush, startingStack: room.startingStack }
+      {
+        flush: room.flush,
+        startingStack: room.startingStack,
+        tournament: room.tournament,
+        levelHands: room.levelHands,
+      }
     );
     // Server deckt All-In-Run-outs zeitversetzt auf (TV-Poker-Stil).
     room.table.autoRunout = false;

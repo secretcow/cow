@@ -57,6 +57,12 @@ const I18N = {
     off: 'Aus',
     flushHint:
       'An: Farben zählen — ein Flush (5 gleiche Farben) schlägt sogar das Full House. Aus: Farben sind nur Deko, kein Flush.',
+    tournamentMode: 'Turnier-Modus',
+    levelLength: 'Hände pro Stufe',
+    tourneyHint:
+      'An: Turnier mit steigenden Blinds — alle paar Hände werden Small/Big Blind höher. Aus: Blinds bleiben konstant bei 10/20.',
+    blindInfo: (sb, bb, lvl) => `Blinds ${sb}/${bb} · Stufe ${lvl}`,
+    nextBlindIn: (n) => ` · ↑ in ${n}`,
     createTable: 'Neuen Tisch erstellen',
     or: 'oder',
     codePlaceholder: 'CODE',
@@ -132,6 +138,7 @@ const I18N = {
       win: (e) => `${e.name} gewinnt ${e.amount}${e.cat ? ` mit ${catName('de', e.cat, e.flush)}` : ''}.`,
       matchOver: (e) => `Match beendet — ${e.name} gewinnt!`,
       rematch: () => 'Revanche! Neue Stacks, neues Glück.',
+      blindsUp: (e) => `⬆ Blinds steigen auf ${e.sb}/${e.bb} (Stufe ${e.level}).`,
     },
     rulesHtml: (flush) => `
       <p>10 Tiere mit Werten von Hahn (10) bis Pferd (1000), je 4-mal im Deck — jede Farbe einmal.
@@ -158,6 +165,12 @@ const I18N = {
     off: 'Off',
     flushHint:
       'On: suits count — a flush (5 same colour) even beats a full house. Off: colours are decorative only, no flush.',
+    tournamentMode: 'Tournament mode',
+    levelLength: 'Hands per level',
+    tourneyHint:
+      'On: tournament with rising blinds — small/big blind go up every few hands. Off: blinds stay constant at 10/20.',
+    blindInfo: (sb, bb, lvl) => `Blinds ${sb}/${bb} · Level ${lvl}`,
+    nextBlindIn: (n) => ` · ↑ in ${n}`,
     createTable: 'Create new table',
     or: 'or',
     codePlaceholder: 'CODE',
@@ -232,6 +245,7 @@ const I18N = {
       win: (e) => `${e.name} wins ${e.amount}${e.cat ? ` with ${catName('en', e.cat, e.flush)}` : ''}.`,
       matchOver: (e) => `Match over — ${e.name} wins!`,
       rematch: () => 'Rematch! Fresh stacks, fresh luck.',
+      blindsUp: (e) => `⬆ Blinds rise to ${e.sb}/${e.bb} (level ${e.level}).`,
     },
     rulesHtml: (flush) => `
       <p>10 animals valued from Rooster (10) to Horse (1000), 4 of each in the deck — one per colour.
@@ -277,7 +291,7 @@ let myCode = null;
 let lastState = null;
 let lastLobby = null;
 let raiseOpen = false;
-let createOpts = { maxPlayers: 6, flush: false, startingStack: 1000 };
+let createOpts = { maxPlayers: 6, flush: false, startingStack: 1000, tournament: false, levelHands: 6 };
 
 // ---------- Token / Raum ----------
 function getToken() {
@@ -395,6 +409,19 @@ $('flushSeg').addEventListener('click', (e) => {
   segActivate('flushSeg', b);
   $('rulesBody').innerHTML = t('rulesHtml', createOpts.flush);
 });
+$('tourneySeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  createOpts.tournament = b.dataset.val === 'on';
+  segActivate('tourneySeg', b);
+  $('levelHandsRow').classList.toggle('hidden', !createOpts.tournament);
+});
+$('levelHandsSeg').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  createOpts.levelHands = +b.dataset.val;
+  segActivate('levelHandsSeg', b);
+});
 function segActivate(segId, btn) {
   $(segId).querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === btn));
 }
@@ -404,7 +431,7 @@ $('nameInput').value = localStorage.getItem('kuhpoker_name') || '';
 $('createBtn').onclick = () => {
   const name = $('nameInput').value.trim();
   localStorage.setItem('kuhpoker_name', name);
-  socket.emit('createRoom', { name, token: myToken, maxPlayers: createOpts.maxPlayers, flush: createOpts.flush, startingStack: createOpts.startingStack }, (res) => {
+  socket.emit('createRoom', { name, token: myToken, maxPlayers: createOpts.maxPlayers, flush: createOpts.flush, startingStack: createOpts.startingStack, tournament: createOpts.tournament, levelHands: createOpts.levelHands }, (res) => {
     if (res?.error) return toast(res.error);
     rememberRoom(res.code);
   });
@@ -550,6 +577,23 @@ function renderLobby(lob) {
   }
 }
 
+function renderBlindInfo(s) {
+  const el = $('blindInfo');
+  if (!el) return;
+  const bl = s.blinds;
+  // Nur im Turniermodus anzeigen (Stufe/Anstieg). Sonst verstecken.
+  if (!bl || !bl.tournament) {
+    el.classList.add('hidden');
+    return;
+  }
+  let txt = t('blindInfo', bl.sb, bl.bb, bl.level);
+  if (typeof bl.nextLevelIn === 'number' && bl.nextLevelIn >= 0) {
+    txt += t('nextBlindIn', bl.nextLevelIn);
+  }
+  el.textContent = txt;
+  el.classList.remove('hidden');
+}
+
 function renderConnStatus(lob) {
   const el = $('connStatus');
   // Eigener Verbindungsabriss hat Vorrang vor dem Status der Mitspieler.
@@ -693,6 +737,7 @@ function render(s) {
 
   $('pot').textContent = t('pot', s.pot);
   $('stageLabel').textContent = t('stages')[s.stage] || s.stage;
+  renderBlindInfo(s);
 
   renderResult(s, me);
   renderControls(s, me);

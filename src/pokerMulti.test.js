@@ -242,5 +242,65 @@ function players(n) {
   assert('autoRunout: runout nie aktiv', t.runoutActive === false);
 }
 
+// ---- Helfer: spielt eine Hand schnell zu Ende (check, sonst fold) ----
+function quickHand(t) {
+  t.startHand();
+  let guard = 0;
+  while (t.stage !== 'handover' && t.stage !== 'idle' && guard++ < 80) {
+    const cur = t.players[t.toAct];
+    if (cur == null) break;
+    const a = t.view(cur.id).actions;
+    if (!a) break;
+    if (a.canCheck) t.act(cur.id, 'check');
+    else t.act(cur.id, 'fold');
+  }
+}
+
+// ---- Test 12: Nicht-Turnier -> Blinds bleiben konstant 10/20 ----
+{
+  const t = new Table(players(3), { startingStack: 100000 });
+  for (let h = 0; h < 5; h++) {
+    quickHand(t);
+    assert(`fix SB=10 (Hand ${h + 1})`, t.smallBlind === 10);
+    assert(`fix BB=20 (Hand ${h + 1})`, t.bigBlind === 20);
+  }
+  const v = t.view('P0');
+  assert('fix view tournament=false', v.blinds.tournament === false);
+  assert('fix view level=null', v.blinds.level === null);
+  assert('fix view nextLevelIn=null', v.blinds.nextLevelIn === null);
+}
+
+// ---- Test 13: Turnier -> Blinds steigen alle levelHands Haende ----
+{
+  const t = new Table(players(3), { tournament: true, levelHands: 2, startingStack: 100000 });
+  quickHand(t); // Hand 1, Level 0
+  assert('tourney H1 BB=20', t.bigBlind === 20 && t.smallBlind === 10);
+  assert('tourney H1 level=1', t.view('P0').blinds.level === 1);
+  assert('tourney H1 nextLevelIn=1', t.view('P0').blinds.nextLevelIn === 1);
+  quickHand(t); // Hand 2, Level 0
+  assert('tourney H2 BB=20', t.bigBlind === 20);
+  assert('tourney H2 nextLevelIn=0', t.view('P0').blinds.nextLevelIn === 0);
+  quickHand(t); // Hand 3, Level 1 -> 15/30
+  assert('tourney H3 SB=15', t.smallBlind === 15);
+  assert('tourney H3 BB=30', t.bigBlind === 30);
+  assert('tourney H3 level=2', t.view('P0').blinds.level === 2);
+  assert('tourney H3 blindsUp geloggt', t.log.some((e) => e.key === 'blindsUp' && e.bb === 30));
+  quickHand(t); // Hand 4, Level 1
+  assert('tourney H4 BB=30', t.bigBlind === 30);
+  quickHand(t); // Hand 5, Level 2 -> 25/50
+  assert('tourney H5 SB=25', t.smallBlind === 25);
+  assert('tourney H5 BB=50', t.bigBlind === 50);
+}
+
+// ---- Test 14: Turnier -> Blinds deckeln beim letzten Level ----
+{
+  const t = new Table(players(3), { tournament: true, levelHands: 1, startingStack: 1000000 });
+  for (let h = 0; h < 15; h++) quickHand(t); // weit ueber 12 Level hinaus
+  assert('cap SB=1000', t.smallBlind === 1000);
+  assert('cap BB=2000', t.bigBlind === 2000);
+  assert('cap handsUntilNextLevel=null', t.handsUntilNextLevel() === null);
+  assert('cap view nextLevelIn=null', t.view('P0').blinds.nextLevelIn === null);
+}
+
 console.log(`\n${pass} bestanden, ${fail} fehlgeschlagen`);
 process.exit(fail === 0 ? 0 : 1);

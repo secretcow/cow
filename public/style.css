@@ -229,6 +229,10 @@ input { font: inherit; }
 .pot { background: rgba(0, 0, 0, 0.5); padding: 5px 18px; border-radius: 999px; font-weight: 700; color: var(--gold); font-size: 1.05rem; }
 .community { display: flex; gap: 6px; min-height: 80px; }
 .stage-label { font-size: 0.85rem; color: #cfe7d8; letter-spacing: 2px; text-transform: uppercase; }
+.blind-info {
+  font-size: 0.78rem; font-weight: 700; color: #ffd86b;
+  background: rgba(0, 0, 0, 0.4); padding: 3px 12px; border-radius: 999px;
+}
 .result-banner { font-size: 1.1rem; font-weight: 800; padding: 8px 20px; border-radius: 10px; background: rgba(0, 0, 0, 0.6); text-align: center; }
 .result-banner.win { background: var(--win); color: #062a13; }
 .result-banner.lose { background: #7a2820; }

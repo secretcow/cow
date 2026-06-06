@@ -49,6 +49,23 @@
               </div>
             </div>
             <p class="opt-hint" id="flushHint" data-i18n="flushHint"></p>
+            <div class="opt-row">
+              <span data-i18n="tournamentMode"></span>
+              <div class="seg" id="tourneySeg">
+                <button data-val="off" class="active" data-i18n="off"></button>
+                <button data-val="on" data-i18n="on"></button>
+              </div>
+            </div>
+            <div class="opt-row hidden" id="levelHandsRow">
+              <span data-i18n="levelLength"></span>
+              <div class="seg" id="levelHandsSeg">
+                <button data-val="4">4</button>
+                <button data-val="6" class="active">6</button>
+                <button data-val="8">8</button>
+                <button data-val="10">10</button>
+              </div>
+            </div>
+            <p class="opt-hint" id="tourneyHint" data-i18n="tourneyHint"></p>
             <button id="createBtn" class="btn primary" data-i18n="createTable"></button>
           </div>
 
@@ -110,6 +127,7 @@
           <div class="pot" id="pot"></div>
           <div class="community" id="community"></div>
           <div class="stage-label" id="stageLabel"></div>
+          <div class="blind-info hidden" id="blindInfo"></div>
           <div class="result-banner hidden" id="resultBanner"></div>
           <div class="result-detail hidden" id="resultDetail"></div>
         </div>

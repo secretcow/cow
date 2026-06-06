@@ -11,6 +11,24 @@ export const STARTING_STACK = 1000;
 export const SMALL_BLIND = 10;
 export const BIG_BLIND = 20;
 
+// Turnier-Blindstruktur: steigt mit jedem Level. Im Turniermodus wird das Level
+// aus der Handnummer abgeleitet (alle `levelHands` Haende ein Level hoeher); das
+// letzte Level gilt danach unbegrenzt weiter.
+export const TOURNEY_BLINDS = [
+  { sb: 10, bb: 20 },
+  { sb: 15, bb: 30 },
+  { sb: 25, bb: 50 },
+  { sb: 50, bb: 100 },
+  { sb: 75, bb: 150 },
+  { sb: 100, bb: 200 },
+  { sb: 150, bb: 300 },
+  { sb: 200, bb: 400 },
+  { sb: 300, bb: 600 },
+  { sb: 500, bb: 1000 },
+  { sb: 750, bb: 1500 },
+  { sb: 1000, bb: 2000 },
+];
+
 // Binomialkoeffizient C(n, k) – fuer die Entscheidung exakt vs. Monte-Carlo.
 function nCk(n, k) {
   if (k < 0 || k > n) return 0;
@@ -61,6 +79,13 @@ export class Table {
     this.flush = !!opts.flush;
     const ss = Math.floor(Number(opts.startingStack));
     this.startingStack = Number.isFinite(ss) && ss > 0 ? ss : STARTING_STACK;
+    // Turniermodus: Blinds steigen mit der Handnummer. Sonst fix 10/20.
+    this.tournament = !!opts.tournament;
+    const lh = Math.floor(Number(opts.levelHands));
+    this.levelHands = Number.isFinite(lh) && lh > 0 ? lh : 6;
+    this.smallBlind = SMALL_BLIND;
+    this.bigBlind = BIG_BLIND;
+    this.blindLevel = 0;
     this.players = playerDefs.map((p) => ({
       id: p.id,
       name: p.name,
@@ -80,7 +105,7 @@ export class Table {
     this.deck = [];
     this.pot = 0; // Gesamteinsatz dieser Hand (inkl. aktueller Bets)
     this.currentBet = 0;
-    this.minRaise = BIG_BLIND;
+    this.minRaise = this.bigBlind;
     this.toAct = null;
     this.actedSinceRaise = new Set();
     this.sbPos = null;
@@ -125,7 +150,8 @@ export class Table {
     this.deck = [];
     this.pot = 0;
     this.currentBet = 0;
-    this.minRaise = BIG_BLIND;
+    this.applyBlindLevel();
+    this.minRaise = this.bigBlind;
     this.toAct = null;
     this.actedSinceRaise = new Set();
     this.sbPos = null;
@@ -139,6 +165,33 @@ export class Table {
     this.log = [];
     this.addLog({ key: 'rematch' });
     return { ok: true };
+  }
+
+  // Setzt smallBlind/bigBlind passend zur aktuellen Handnummer. Im Nicht-Turnier
+  // bleibt es fix bei 10/20. Loggt einen Blind-Anstieg (ausser bei der 1. Hand).
+  applyBlindLevel() {
+    if (!this.tournament) {
+      this.blindLevel = 0;
+      this.smallBlind = SMALL_BLIND;
+      this.bigBlind = BIG_BLIND;
+      return;
+    }
+    const level = Math.max(0, Math.floor((this.handNo - 1) / this.levelHands));
+    const prevBb = this.bigBlind;
+    const b = TOURNEY_BLINDS[Math.min(level, TOURNEY_BLINDS.length - 1)];
+    this.blindLevel = level;
+    this.smallBlind = b.sb;
+    this.bigBlind = b.bb;
+    if (this.handNo > 1 && this.bigBlind > prevBb) {
+      this.addLog({ key: 'blindsUp', sb: this.smallBlind, bb: this.bigBlind, level: level + 1 });
+    }
+  }
+
+  // Haende bis zur naechsten Blind-Erhoehung (nur im Turniermodus sinnvoll).
+  handsUntilNextLevel() {
+    if (!this.tournament) return null;
+    if (this.blindLevel >= TOURNEY_BLINDS.length - 1) return null; // letztes Level erreicht
+    return (this.blindLevel + 1) * this.levelHands - this.handNo;
   }
 
   // ---- Index-Helfer (rund um den Tisch) ----
@@ -184,12 +237,13 @@ export class Table {
       return { error: 'Mindestens zwei Spieler mit Chips noetig.' };
 
     this.handNo++;
+    this.applyBlindLevel();
     this.button = this.nextLive(this.button);
     this.deck = shuffle(buildDeck());
     this.community = [];
     this.pot = 0;
     this.currentBet = 0;
-    this.minRaise = BIG_BLIND;
+    this.minRaise = this.bigBlind;
     this.result = null;
     this.actedSinceRaise = new Set();
     this.shownCards = new Set();
@@ -231,10 +285,10 @@ export class Table {
       firstToAct = this.nextLive(this.bbPos); // UTG
     }
 
-    this.postBlind(this.sbPos, SMALL_BLIND);
-    this.postBlind(this.bbPos, BIG_BLIND);
-    this.currentBet = BIG_BLIND;
-    this.minRaise = BIG_BLIND;
+    this.postBlind(this.sbPos, this.smallBlind);
+    this.postBlind(this.bbPos, this.bigBlind);
+    this.currentBet = this.bigBlind;
+    this.minRaise = this.bigBlind;
 
     this.stage = 'preflop';
     this.addLog({ key: 'handStart', hand: this.handNo, name: this.players[this.button].name });
@@ -411,7 +465,7 @@ export class Table {
   proceedAfterBetting() {
     for (const p of this.players) p.bet = 0;
     this.currentBet = 0;
-    this.minRaise = BIG_BLIND;
+    this.minRaise = this.bigBlind;
     this.actedSinceRaise = new Set();
 
     // All-In-Run-out: keiner (oder nur einer) kann mehr handeln, aber >=2 Spieler
@@ -809,7 +863,13 @@ export class Table {
       log: this.log,
       matchOver: this.matchOver,
       matchWinnerId: this.matchWinnerId,
-      blinds: { sb: SMALL_BLIND, bb: BIG_BLIND },
+      blinds: {
+        sb: this.smallBlind,
+        bb: this.bigBlind,
+        tournament: this.tournament,
+        level: this.tournament ? this.blindLevel + 1 : null,
+        nextLevelIn: this.handsUntilNextLevel(),
+      },
     };
   }
 }
