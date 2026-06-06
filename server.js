@@ -23,6 +23,10 @@ const rooms = new Map();
 const ROOM_TTL_MS = 10 * 60 * 1000; // Raum nach 10 Min. ohne Verbindung loeschen
 const RUNOUT_STEP_MS = Number(process.env.RUNOUT_STEP_MS ?? 1300); // Takt fuer All-In-Reveal
 const CHAT_HISTORY = 60; // gespeicherte Chat-Nachrichten pro Raum
+// Schonfrist, bevor ein getrennter Spieler, der am Zug ist, automatisch
+// checkt/foldet. Verhindert, dass die Hand bei Verbindungsverlust ewig haengt,
+// gibt aber Zeit fuer einen kurzen Reconnect.
+const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS ?? 20000);
 
 function makeCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -105,6 +109,8 @@ io.on('connection', (socket) => {
       table: null,
       cleanupTimer: null,
       runoutTimer: null,
+      autoActTimer: null,
+      autoActFor: null,
       chat: [],
     };
     rooms.set(code, room);
@@ -173,6 +179,71 @@ io.on('connection', (socket) => {
     }
   }
 
+  function clearAutoAct(room) {
+    if (room.autoActTimer) {
+      clearTimeout(room.autoActTimer);
+      room.autoActTimer = null;
+    }
+    room.autoActFor = null;
+  }
+
+  // Foldet/checkt automatisch fuer Spieler am Zug, die getrennt sind – solange,
+  // bis ein verbundener Spieler dran ist oder die Hand vorbei ist. Verhindert den
+  // Deadlock, wenn jemand mitten in der Hand die Verbindung verliert oder den
+  // Tisch verlaesst, waehrend er am Zug ist.
+  function autoActDisconnected(room) {
+    const t = room.table;
+    if (!t) return false;
+    let acted = false;
+    while (
+      t.toAct !== null &&
+      t.stage !== 'handover' &&
+      t.stage !== 'showdown'
+    ) {
+      const seat = room.players[t.toAct]; // Engine-Index == room.players-Index
+      if (!seat || seat.connected) break; // verbundener Spieler: nicht eingreifen
+      const a = t.view(seat.token).actions;
+      if (!a) break;
+      const type = a.canCheck ? 'check' : 'fold';
+      const res = t.act(seat.token, type);
+      if (res?.error) break;
+      acted = true;
+    }
+    return acted;
+  }
+
+  // Plant das automatische Handeln, falls der Spieler am Zug getrennt ist.
+  // `immediate` (z. B. bei bewusstem Verlassen) handelt ohne Schonfrist.
+  function scheduleAutoAct(room, immediate = false) {
+    const t = room.table;
+    if (!t || t.toAct === null || t.stage === 'handover' || t.stage === 'showdown') {
+      clearAutoAct(room);
+      return;
+    }
+    const seat = room.players[t.toAct];
+    if (!seat || seat.connected) {
+      clearAutoAct(room);
+      return;
+    }
+    // Laeuft bereits ein Timer fuer genau diesen Spieler? Dann nicht neu starten,
+    // damit ein Flackern anderer Verbindungen die Schonfrist nicht verlaengert.
+    if (room.autoActTimer && room.autoActFor === t.toAct && !immediate) return;
+    clearAutoAct(room);
+    room.autoActFor = t.toAct;
+    room.autoActTimer = setTimeout(() => {
+      room.autoActTimer = null;
+      room.autoActFor = null;
+      if (!rooms.has(room.code) || !room.table) return;
+      const acted = autoActDisconnected(room);
+      if (acted) {
+        broadcast(room);
+        maybeDriveRunout(room);
+      }
+      // Falls der naechste Spieler ebenfalls getrennt ist: erneut planen.
+      scheduleAutoAct(room);
+    }, immediate ? 0 : DISCONNECT_GRACE_MS);
+  }
+
   // Reconnect: derselbe Token kehrt zu seinem Sitzplatz zurueck.
   socket.on('resume', ({ code, token }, cb) => {
     code = (code || '').toUpperCase().trim();
@@ -188,6 +259,8 @@ io.on('connection', (socket) => {
     cb?.({ ok: true, code });
     broadcast(room);
     sendChatHistory(socket, room);
+    // Reconnect: Auto-Act neu bewerten (ggf. Schonfrist abbrechen).
+    scheduleAutoAct(room);
   });
 
   socket.on('startHand', () => {
@@ -201,12 +274,14 @@ io.on('connection', (socket) => {
     if (res?.error) socket.emit('errorMsg', res.error);
     broadcast(room);
     maybeDriveRunout(room);
+    scheduleAutoAct(room);
   });
 
   socket.on('rematch', () => {
     const room = rooms.get(socket.data.code);
     if (!room?.table) return;
     room.table.resetMatch();
+    clearAutoAct(room);
     broadcast(room);
   });
 
@@ -229,6 +304,7 @@ io.on('connection', (socket) => {
     if (res?.error) socket.emit('errorMsg', res.error);
     broadcast(room);
     maybeDriveRunout(room);
+    scheduleAutoAct(room);
   });
 
   // Tisch-Chat: kurze Nachrichten zwischen den Spielern am Tisch.
@@ -264,10 +340,13 @@ io.on('connection', (socket) => {
     }
     if (room.players.length === 0) {
       cancelCleanup(room);
+      clearAutoAct(room);
       rooms.delete(room.code);
       return;
     }
     broadcast(room);
+    // Bewusstes Verlassen am Zug: sofort automatisch handeln (kein Warten).
+    scheduleAutoAct(room, true);
     maybeScheduleCleanup(room);
   });
 
@@ -277,6 +356,8 @@ io.on('connection', (socket) => {
     const seat = seatBySocket(room, socket.id);
     if (seat) seat.connected = false;
     broadcast(room);
+    // Falls der getrennte Spieler am Zug ist: nach Schonfrist automatisch handeln.
+    scheduleAutoAct(room);
     maybeScheduleCleanup(room);
   });
 });
