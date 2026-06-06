@@ -6,6 +6,7 @@
 local Cards = require("../src/shared/Cards")
 local HandEval = require("../src/shared/HandEval")
 local PokerEngine = require("../src/shared/PokerEngine")
+local Strings = require("../src/shared/Strings")
 
 local passed = 0
 local failed = 0
@@ -278,6 +279,63 @@ do
 	t.handNo = 1000
 	t:applyBlindLevel()
 	ok(t.bigBlind == 2000, "spaetes Level: 1000/2000 (Maximum)")
+end
+
+print("== Strings: Log-Uebersetzung DE/EN ==")
+do
+	ok(
+		Strings.translateLog("de", { key = "handStart", hand = 3, name = "Anna" })
+			== "— Hand 3 — Anna hat den Button.",
+		"DE handStart"
+	)
+	ok(
+		Strings.translateLog("en", { key = "handStart", hand = 3, name = "Anna" })
+			== "— Hand 3 — Anna is on the button.",
+		"EN handStart"
+	)
+	ok(Strings.translateLog("de", { key = "fold", name = "Bert" }) == "Bert steigt aus (Fold).", "DE fold")
+	ok(
+		Strings.translateLog("de", { key = "call", name = "Bert", amount = 40, allIn = true })
+			== "Bert geht mit (40). All-In!",
+		"DE call all-in"
+	)
+	ok(
+		Strings.translateLog("en", { key = "raise", name = "Cara", to = 120, allIn = false })
+			== "Cara raises to 120.",
+		"EN raise"
+	)
+	-- community: Tiernamen, sprachabhaengig
+	ok(
+		Strings.translateLog("de", { key = "community", street = "flop", cards = { { rank = 1 }, { rank = 9 }, { rank = 10 } } })
+			== "Flop: Hahn, Kuh, Pferd",
+		"DE community Flop"
+	)
+	ok(
+		Strings.translateLog("en", { key = "community", street = "turn", cards = { { rank = 5 } } })
+			== "Turn: Sheep",
+		"EN community Turn"
+	)
+	-- win mit Kategorie (Flush aus): cat 8 = Vierling / Four of a Kind
+	ok(
+		Strings.translateLog("de", { key = "win", name = "Anna", amount = 200, cat = 8, flush = false })
+			== "Anna gewinnt 200 mit Vierling.",
+		"DE win Vierling"
+	)
+	ok(
+		Strings.translateLog("en", { key = "win", name = "Anna", amount = 200, cat = 8, flush = false })
+			== "Anna wins 200 with Four of a Kind.",
+		"EN win Quads"
+	)
+	-- Flush-Modus: cat 8 = Flush (nicht Vierling)
+	ok(Strings.catName("de", 8, true) == "Flush", "catName Flush-Modus code 8 = Flush")
+	ok(Strings.catName("de", 8, false) == "Vierling", "catName ohne Flush code 8 = Vierling")
+	ok(Strings.translateLog("de", { key = "win", name = "X", amount = 10 }) == "X gewinnt 10.", "win ohne cat")
+	ok(Strings.translateLog("de", { key = "rematch" }) == "Revanche! Neue Stacks, neues Glück.", "DE rematch")
+	ok(
+		Strings.translateLog("en", { key = "rebuy", name = "Bert", amount = 500 }) == "Bert rebuys: +500 🪙.",
+		"EN rebuy"
+	)
+	ok(Strings.translateLog("de", { key = "unbekannt" }) == "unbekannt", "Fallback auf key")
 end
 
 print(string.format("\n%d bestanden, %d fehlgeschlagen", passed, failed))

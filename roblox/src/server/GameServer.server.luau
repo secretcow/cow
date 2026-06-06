@@ -113,6 +113,10 @@ RebuyEvent.OnServerEvent:Connect(function(player, amount)
 	if not tbl then
 		return
 	end
+	-- Ohne Betrag: Standard = voller Buy-in (wie in server.js).
+	if type(amount) ~= "number" or amount <= 0 then
+		amount = tbl.startingStack
+	end
 	tbl:rebuy(idOf(player), amount)
 	broadcast()
 end)
