@@ -32,17 +32,26 @@ const io = new Server(httpServer, {
   },
 });
 
+// Ring-Puffer der letzten Fehler – fuer schnelle Ferndiagnose ueber /healthz,
+// ohne ins Hoster-Dashboard zu muessen. Zentrale Stelle fuer alle Fehlerpfade.
+const recentErrors = [];
+const MAX_RECENT_ERRORS = 25;
+let errorCount = 0;
+function logError(label, e) {
+  errorCount += 1;
+  const message = e?.stack || e?.message || String(e);
+  recentErrors.push({ ts: new Date().toISOString(), label, message: message.slice(0, 600) });
+  if (recentErrors.length > MAX_RECENT_ERRORS) recentErrors.shift();
+  console.error(`[${label}]`, message);
+}
+
 // Letztes Sicherheitsnetz: Ein einzelner Bug (z. B. in der Engine, in einem
 // Timer-Callback oder einer vergessenen Promise) darf NIE den ganzen Prozess
 // killen – sonst fliegen ALLE Tische gleichzeitig raus ("Spiel abgestuerzt").
 // Stattdessen loggen und weiterlaufen; der betroffene Tisch erholt sich beim
 // naechsten Event oder wird per TTL aufgeraeumt.
-process.on('uncaughtException', (e) => {
-  console.error('[uncaughtException]', e?.stack || e?.message || e);
-});
-process.on('unhandledRejection', (e) => {
-  console.error('[unhandledRejection]', e?.stack || e?.message || e);
-});
+process.on('uncaughtException', (e) => logError('uncaughtException', e));
+process.on('unhandledRejection', (e) => logError('unhandledRejection', e));
 
 // Wrapper fuer Socket-Handler: faengt synchrone Fehler UND abgelehnte Promises
 // pro Event ab, damit der Fehler eines Spielers nicht die anderen am Tisch
@@ -52,19 +61,40 @@ function guard(label, fn) {
     try {
       const r = fn(...args);
       if (r && typeof r.then === 'function') {
-        r.catch((e) => console.error(`[handler:${label}]`, e?.stack || e?.message || e));
+        r.catch((e) => logError(`handler:${label}`, e));
       }
       return r;
     } catch (e) {
-      console.error(`[handler:${label}]`, e?.stack || e?.message || e);
+      logError(`handler:${label}`, e);
     }
   };
 }
 
-// Health-Endpoint fuer Uptime-Checks / Keepalive.
-app.get('/healthz', (_req, res) =>
-  res.json({ ok: true, rooms: rooms.size, uptime: Math.round(process.uptime()), store: storeInfo.backend })
-);
+// Health-Endpoint fuer Uptime-Checks / Keepalive + schnelle Ferndiagnose.
+app.get('/healthz', (_req, res) => {
+  let players = 0;
+  let connected = 0;
+  let tablesRunning = 0;
+  for (const room of rooms.values()) {
+    players += room.players.length;
+    connected += room.players.filter((p) => p.connected).length;
+    if (room.table) tablesRunning += 1;
+  }
+  const mem = process.memoryUsage();
+  res.json({
+    ok: true,
+    uptime: Math.round(process.uptime()),
+    store: storeInfo.backend,
+    rooms: rooms.size,
+    tablesRunning,
+    players,
+    connected,
+    rssMB: Math.round(mem.rss / 1048576),
+    heapMB: Math.round(mem.heapUsed / 1048576),
+    errorCount,
+    recentErrors,
+  });
+});
 
 // Leaderboard (Top-Spieler nach gewonnenen Matches).
 app.get('/api/leaderboard', async (_req, res) => {
@@ -180,7 +210,7 @@ async function sendProfile(socket, token, name) {
     const p = await loadProfile(token, name);
     socket.emit('profile', publicProfile(p));
   } catch (e) {
-    console.error('sendProfile:', e.message);
+    logError('sendProfile', e);
   }
 }
 
@@ -374,7 +404,7 @@ io.on('connection', (socket) => {
       } catch (e) {
         // Timer-Fehler wuerde sonst den Prozess killen: abfangen, Run-out
         // stoppen (Timer ist schon genullt), Tisch bleibt am Leben.
-        console.error('[driveRunout]', e?.stack || e?.message || e);
+        logError('driveRunout', e);
       }
     };
     room.runoutTimer = setTimeout(step, RUNOUT_STEP_MS);
@@ -451,7 +481,7 @@ io.on('connection', (socket) => {
         scheduleAutoAct(room);
       } catch (e) {
         // Auto-Act-Fehler nicht eskalieren lassen (wuerde sonst crashen).
-        console.error('[scheduleAutoAct]', e?.stack || e?.message || e);
+        logError('scheduleAutoAct', e);
       }
     }, immediate ? 0 : DISCONNECT_GRACE_MS);
   }
