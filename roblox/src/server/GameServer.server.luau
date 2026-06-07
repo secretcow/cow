@@ -25,6 +25,8 @@ local RoomManager = require(Shared:WaitForChild("RoomManager"))
 local Profile = require(Shared:WaitForChild("Profile"))
 local Bot = require(Shared:WaitForChild("Bot"))
 local Progression = require(Shared:WaitForChild("Progression"))
+local Monetization = require(Shared:WaitForChild("Monetization"))
+local MarketplaceService = game:GetService("MarketplaceService")
 -- ProfileStore liegt neben diesem Script (ServerScriptService.Server.ProfileStore).
 local ProfileStore = require(script.Parent:WaitForChild("ProfileStore"))
 
@@ -71,6 +73,7 @@ local RebuyEvent = mkEvent("Rebuy")
 local ChatEvent = mkEvent("Chat")
 local TutorialDoneEvent = mkEvent("TutorialDone")
 local EquipEvent = mkEvent("Equip")
+local RefreshVipEvent = mkEvent("RefreshVip")
 local StateEvent = mkEvent("State")
 
 -- ---- Zustand ----
@@ -82,6 +85,18 @@ local function idOf(player)
 end
 local function playerById(id)
 	return Players:GetPlayerByUserId(tonumber(id) or -1)
+end
+
+-- Besitzt der Spieler den VIP-Game-Pass? Robust (pcall) — bei nicht angelegtem
+-- Pass (passId 0) oder Fehler einfach false (kein Crash, kein Vorteil ohne Kauf).
+local function ownsVip(userId)
+	if not Monetization.vipAvailable() then
+		return false
+	end
+	local ok, res = pcall(function()
+		return MarketplaceService:UserOwnsGamePassAsync(tonumber(userId) or -1, Monetization.VIP.passId)
+	end)
+	return ok and res == true
 end
 
 -- ===================== Sichten =====================
@@ -172,6 +187,9 @@ local function tableView(room, id)
 			pv.frameColor = Progression.colorOf("avatarFrame", frameId)
 		end
 		pv.backColor = Progression.colorOf("cardBack", backId)
+		if prof and prof.vip == true then
+			pv.vip = true -- VIP-Abzeichen (👑) am Sitz
+		end
 	end
 	return v
 end
@@ -912,7 +930,7 @@ EquipEvent.OnServerEvent:Connect(function(player, category, id)
 	local pid = idOf(player)
 	local prof = ProfileStore.get(pid) or ProfileStore.load(pid, player.Name)
 	local level = Progression.levelFromXp(prof.xp)
-	if not Progression.isUnlocked(level, category, id) then
+	if not Progression.isUnlocked(level, category, id, prof.vip == true) then
 		return -- noch nicht freigeschaltet (oder unbekannte id)
 	end
 	ProfileStore.setCosmetic(pid, category, id, player.Name)
@@ -926,11 +944,65 @@ EquipEvent.OnServerEvent:Connect(function(player, category, id)
 	end
 end)
 
+-- ===================== Monetarisierung =====================
+-- Reine Spass-Chips/Kosmetik, kein Echtgeldwert, keine Auszahlung, keine
+-- Zufalls-Lootboxen — siehe Shared/Monetization (Compliance-Hinweise).
+
+-- Developer-Product-Kauf (Chip-Pakete) verarbeiten. Robust + idempotent:
+-- Nur online & deterministisch gutschreiben; sonst spaeter erneut versuchen.
+MarketplaceService.ProcessReceipt = function(receiptInfo)
+	local chips = Monetization.chipsForProduct(receiptInfo.ProductId)
+	if chips <= 0 then
+		-- Unbekanntes/nicht konfiguriertes Produkt -> spaeter erneut versuchen.
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	local plr = playerById(receiptInfo.PlayerId)
+	if not plr then
+		-- Spieler offline: nicht abschliessen, Roblox versucht es spaeter erneut.
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	local idStr = tostring(receiptInfo.PlayerId)
+	local okGrant = pcall(function()
+		ProfileStore.addChips(idStr, chips, plr.Name)
+	end)
+	if not okGrant then
+		return Enum.ProductPurchaseDecision.NotProcessedYet
+	end
+	-- Aktualisiertes Profil + Kauf-Hinweis an den Client.
+	local prof = ProfileStore.get(idStr)
+	if prof then
+		StateEvent:FireClient(plr, {
+			screen = "profile",
+			profile = Profile.publicView(prof),
+			purchase = { chips = chips },
+		})
+	end
+	return Enum.ProductPurchaseDecision.PurchaseGranted
+end
+
+-- Nach einem VIP-Kauf (oder zur Sicherheit) den Pass-Besitz neu pruefen und
+-- das Profil aktualisieren. Vom Client nach PromptGamePassPurchaseFinished.
+RefreshVipEvent.OnServerEvent:Connect(function(player)
+	local id = idOf(player)
+	local isVip = ownsVip(player.UserId)
+	local prof = ProfileStore.setVip(id, isVip, player.Name)
+	StateEvent:FireClient(player, { screen = "profile", profile = Profile.publicView(prof) })
+	local code = playerRoom[id]
+	local room = code and rm:getRoom(code)
+	if room then
+		broadcastRoom(room)
+	end
+end)
+
 -- ===================== Spieler-Ereignisse =====================
 
 Players.PlayerAdded:Connect(function(player)
 	local id = idOf(player)
 	ProfileStore.load(id, player.Name)
+	-- VIP-Status (Game-Pass) bestimmen, dann Tagesbonus vergeben (VIP x2).
+	local isVip = ownsVip(player.UserId)
+	ProfileStore.setVip(id, isVip, player.Name)
+	ProfileStore.grantDailyBonus(id, if isVip then Monetization.VIP.dailyMultiplier else 1)
 	local code = playerRoom[id]
 	local room = code and rm:getRoom(code)
 	if room then

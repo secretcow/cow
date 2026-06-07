@@ -103,12 +103,41 @@ function ProfileStore.load(userId, name)
 	local p = Profile.sanitize(raw, userId, name)
 	Profile.refillIfBroke(p)
 	cache[userId] = p
-	-- Taeglichen Login-Bonus pruefen (einmal pro frischer Sitzung/Tag).
-	local bonus = Profile.claimDailyBonus(p)
+	-- Neues/aufgefuelltes Profil gleich sichern. (Der Tagesbonus wird separat
+	-- ueber grantDailyBonus vergeben — erst nachdem der VIP-Status feststeht,
+	-- damit der VIP-Multiplikator korrekt greift.)
+	ProfileStore.save(userId)
+	return p
+end
+
+-- Vergibt den taeglichen Login-Bonus (einmal pro Kalendertag). `multiplier`
+-- skaliert den Betrag (VIP x2). Legt den Bonus zum Abholen ab und persistiert.
+function ProfileStore.grantDailyBonus(userId, multiplier)
+	local p = cache[userId]
+	if not p then
+		return nil
+	end
+	local bonus = Profile.claimDailyBonus(p, nil, multiplier)
 	if bonus.granted then
 		pendingBonus[userId] = bonus
+		ProfileStore.save(userId)
 	end
-	-- Neues/aufgefuelltes Profil gleich sichern.
+	return bonus
+end
+
+-- Setzt das (Laufzeit-)VIP-Flag aus dem Game-Pass-Besitz. Nicht persistiert —
+-- wird pro Sitzung neu aus MarketplaceService abgeleitet.
+function ProfileStore.setVip(userId, isVip, name)
+	local p = ProfileStore.load(userId, name)
+	Profile.setVip(p, isVip)
+	return p
+end
+
+-- Schreibt gekaufte Chips gut (Developer-Product-Kauf). Write-through, da ein
+-- Kauf nie verloren gehen darf.
+function ProfileStore.addChips(userId, amount, name)
+	local p = ProfileStore.load(userId, name)
+	Profile.adjustWallet(p, math.max(0, math.floor(tonumber(amount) or 0)))
 	ProfileStore.save(userId)
 	return p
 end

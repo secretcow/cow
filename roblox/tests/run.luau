@@ -11,6 +11,7 @@ local RoomManager = require("../src/shared/RoomManager")
 local Profile = require("../src/shared/Profile")
 local Bot = require("../src/shared/Bot")
 local Progression = require("../src/shared/Progression")
+local Monetization = require("../src/shared/Monetization")
 
 local passed = 0
 local failed = 0
@@ -542,6 +543,81 @@ do
 	ok(Progression.isUnlocked(99, "cardBack", "gibtsnicht") == false, "isUnlocked unbekannte id -> false")
 	-- colorOf-Fallback bei unbekannter id -> Default-Farbe der Kategorie.
 	ok(type(Progression.colorOf("cardBack", "gibtsnicht")) == "table", "colorOf-Fallback liefert Default-Farbe")
+end
+
+print("== Progression: VIP-exklusive Kosmetik ==")
+do
+	-- VIP-Items sind ohne VIP gesperrt — selbst auf Max-Level.
+	ok(Progression.find("cardBack", "vip_royal") ~= nil, "vip_royal existiert")
+	ok(Progression.find("avatarFrame", "vip_crown") ~= nil, "vip_crown existiert")
+	ok(Progression.isUnlocked(Progression.MAX_LEVEL, "cardBack", "vip_royal", false) == false, "VIP-Item ohne VIP gesperrt (auch Max-Level)")
+	ok(Progression.isUnlocked(1, "cardBack", "vip_royal", true) == true, "VIP-Item mit VIP frei (auch Level 1)")
+	ok(Progression.isUnlocked(Progression.MAX_LEVEL, "avatarFrame", "vip_crown", false) == false, "vip_crown ohne VIP gesperrt")
+	ok(Progression.isUnlocked(1, "avatarFrame", "vip_crown", true) == true, "vip_crown mit VIP frei")
+	-- Normale Items ignorieren das VIP-Flag (rueckwaertskompatibel).
+	ok(Progression.isUnlocked(2, "cardBack", "crimson") == true, "normales Item ohne isVip-Arg weiterhin frei")
+end
+
+-- ===================== Monetization (Shop) =====================
+print("== Monetization: Chip-Pakete + VIP ==")
+do
+	-- Kataloge vorhanden.
+	ok(#Monetization.CHIP_PACKS >= 1, "Chip-Pakete im Katalog")
+	ok(type(Monetization.VIP) == "table" and Monetization.VIP.dailyMultiplier == 2, "VIP-Definition mit x2-Bonus")
+
+	-- Default: productId/passId 0 -> nichts kaufbar (kein versehentlicher Verkauf).
+	for _, pack in Monetization.CHIP_PACKS do
+		ok(Monetization.packAvailable(pack) == false, "Paket ohne productId nicht kaufbar: " .. pack.id)
+	end
+	ok(Monetization.vipAvailable() == false, "VIP ohne passId nicht kaufbar")
+
+	-- findPack per id.
+	local small = Monetization.findPack("chips_small")
+	ok(small ~= nil and small.chips > 0, "findPack liefert Paket")
+	ok(Monetization.findPack("gibtsnicht") == nil, "findPack: unbekannte id -> nil")
+
+	-- productId 0 matcht NIE (Schutz vor Fehlgutschrift).
+	ok(Monetization.packByProductId(0) == nil, "productId 0 -> nil")
+	ok(Monetization.chipsForProduct(0) == 0, "chipsForProduct(0) = 0")
+	ok(Monetization.chipsForProduct(12345) == 0, "unbekannte productId -> 0 Chips")
+
+	-- Mit gesetzter productId wird das Paket auffindbar + kaufbar.
+	local pk = Monetization.CHIP_PACKS[1]
+	local origId = pk.productId
+	pk.productId = 99001
+	ok(Monetization.packAvailable(pk) == true, "Paket mit productId kaufbar")
+	ok(Monetization.packByProductId(99001) == pk, "packByProductId findet das Paket")
+	ok(Monetization.chipsForProduct(99001) == pk.chips, "chipsForProduct = Paket-Chips")
+	pk.productId = origId -- Katalog wiederherstellen (keine Seiteneffekte)
+
+	-- VIP-Bonus-Multiplikator.
+	ok(Monetization.applyVipBonus(500, false) == 500, "Nicht-VIP: Bonus unveraendert")
+	ok(Monetization.applyVipBonus(500, true) == 1000, "VIP: Bonus verdoppelt")
+	ok(Monetization.applyVipBonus(-50, true) == 0, "negativer Bonus -> 0 geklemmt")
+end
+
+print("== Profile: VIP-Flag + Tagesbonus-Multiplikator ==")
+do
+	local p = Profile.default(1, "X")
+	ok(p.vip == false, "default: kein VIP")
+	Profile.setVip(p, true)
+	ok(p.vip == true, "setVip setzt das Flag")
+	ok(Profile.publicView(p).vip == true, "publicView enthaelt vip")
+	-- sanitize vertraut gespeichertem VIP NICHT (immer false; Server leitet ab).
+	ok(Profile.sanitize({ vip = true }, 1, "X").vip == false, "sanitize: VIP wird nicht aus Speicher vertraut")
+
+	-- Tagesbonus mit Multiplikator (VIP x2).
+	local DAY = 86400
+	local q = Profile.default(2, "Y")
+	q.wallet = 0
+	local b = Profile.claimDailyBonus(q, 10 * DAY, 2)
+	ok(b.granted and b.amount == Profile.DAILY_BASE * 2, "VIP-Tagesbonus verdoppelt")
+	ok(b.vip == true, "Bonus markiert vip=true bei Multiplikator")
+	ok(q.wallet == Profile.DAILY_BASE * 2, "Wallet erhaelt den verdoppelten Bonus")
+	-- Ohne Multiplikator: unveraendert (Default 1).
+	local r = Profile.default(3, "Z")
+	local b2 = Profile.claimDailyBonus(r, 10 * DAY)
+	ok(b2.amount == Profile.DAILY_BASE and b2.vip == false, "ohne Multiplikator: Basisbetrag, vip=false")
 end
 
 print("== Profile: refill + Mutatoren ==")

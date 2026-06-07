@@ -13,11 +13,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local SoundService = game:GetService("SoundService")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Cards = require(Shared:WaitForChild("Cards"))
 local Strings = require(Shared:WaitForChild("Strings"))
 local Progression = require(Shared:WaitForChild("Progression"))
+local Monetization = require(Shared:WaitForChild("Monetization"))
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local CreateRoomFn = Remotes:WaitForChild("CreateRoom")
@@ -30,6 +32,7 @@ local RebuyEvent = Remotes:WaitForChild("Rebuy")
 local ChatEvent = Remotes:WaitForChild("Chat")
 local TutorialDoneEvent = Remotes:WaitForChild("TutorialDone")
 local EquipEvent = Remotes:WaitForChild("Equip")
+local RefreshVipEvent = Remotes:WaitForChild("RefreshVip")
 local StateEvent = Remotes:WaitForChild("State")
 
 local player = Players.LocalPlayer
@@ -365,6 +368,18 @@ customizeBtn.Text = "🎨 Anpassen"
 customizeBtn.Parent = lobbyScreen
 mkCorner(customizeBtn, 10)
 
+-- "Shop" — Chip-Pakete & VIP (reine Spass-Chips/Optik, kein Echtgeldwert).
+local shopBtn = Instance.new("TextButton")
+shopBtn.Size = UDim2.new(0, 96, 0, 40)
+shopBtn.Position = UDim2.new(0.5, -312, 0, 50)
+shopBtn.BackgroundColor3 = COL_GOLD
+shopBtn.TextColor3 = Color3.fromRGB(30, 26, 12)
+shopBtn.Font = Enum.Font.GothamBold
+shopBtn.TextSize = 15
+shopBtn.Text = "🛒 Shop"
+shopBtn.Parent = lobbyScreen
+mkCorner(shopBtn, 10)
+
 -- ---- Schnell spielen (Matchmaking) ----
 local quickBtn = Instance.new("TextButton")
 quickBtn.Size = UDim2.new(0, 860, 0, 56)
@@ -565,13 +580,8 @@ dailyToast.Parent = root
 mkCorner(dailyToast, 10)
 
 local toastGen = 0
-local function showDailyBonus(b)
-	if not (b and b.granted) then
-		return
-	end
-	dailyToast.Text = if lang == "de"
-		then `🎁 Täglicher Bonus: +{b.amount} 🪙   ·   Serie {b.streak} Tag(e)`
-		else `🎁 Daily bonus: +{b.amount} 🪙   ·   Streak {b.streak} day(s)`
+local function showToast(text)
+	dailyToast.Text = text
 	dailyToast.Visible = true
 	toastGen += 1
 	local gen = toastGen
@@ -580,6 +590,23 @@ local function showDailyBonus(b)
 			dailyToast.Visible = false
 		end
 	end)
+end
+
+local function showDailyBonus(b)
+	if not (b and b.granted) then
+		return
+	end
+	local vipTag = if b.vip then " 👑x2" else ""
+	showToast(if lang == "de"
+		then `🎁 Täglicher Bonus: +{b.amount} 🪙{vipTag}   ·   Serie {b.streak} Tag(e)`
+		else `🎁 Daily bonus: +{b.amount} 🪙{vipTag}   ·   Streak {b.streak} day(s)`)
+end
+
+-- Kauf-Bestaetigung (Chips gutgeschrieben) — wiederverwendet den Toast.
+local function showPurchaseToast(chips)
+	showToast(if lang == "de"
+		then `✅ Kauf erfolgreich: +{chips} 🪙 gutgeschrieben`
+		else `✅ Purchase complete: +{chips} 🪙 added`)
 end
 
 -- =====================================================================
@@ -918,7 +945,7 @@ local function renderCosmetics()
 		end
 		local equippedId = prof[row.key] or Progression.defaultId(row.key)
 		for j, item in Progression.catalog(row.key) do
-			local unlocked = level >= item.level
+			local unlocked = Progression.isUnlocked(level, row.key, item.id, prof.vip == true)
 			local tile = Instance.new("TextButton")
 			tile.Size = UDim2.new(0, 84, 0, 84)
 			tile.BackgroundColor3 = rgbColor(item.color)
@@ -960,7 +987,7 @@ local function renderCosmetics()
 				lock.TextSize = 13
 				lock.TextColor3 = Color3.fromRGB(255, 255, 255)
 				lock.TextStrokeTransparency = 0.3
-				lock.Text = `🔒 Lvl {item.level}`
+				lock.Text = if item.vip then "🔒 VIP" else `🔒 Lvl {item.level}`
 				lock.ZIndex = 104
 				lock.Parent = tile
 			end
@@ -998,6 +1025,267 @@ end
 
 cosClose.Activated:Connect(hideCosmetics)
 customizeBtn.Activated:Connect(showCosmetics)
+
+-- =====================================================================
+-- ============================ SHOP (Overlay) =========================
+-- Chip-Pakete (Developer Products) + VIP (Game Pass). Reine Spass-Chips/
+-- Optik — kein Echtgeldwert, keine Auszahlung, keine Zufalls-Lootboxen.
+-- Nicht konfigurierte Eintraege (Asset-Id 0) werden ausgeblendet.
+
+local shopOverlay = Instance.new("Frame")
+shopOverlay.Size = UDim2.new(1, 0, 1, 0)
+shopOverlay.BackgroundColor3 = Color3.fromRGB(6, 9, 14)
+shopOverlay.BackgroundTransparency = 0.25
+shopOverlay.BorderSizePixel = 0
+shopOverlay.Visible = false
+shopOverlay.ZIndex = 100
+shopOverlay.Parent = root
+
+local shopCard = Instance.new("Frame")
+shopCard.Size = UDim2.new(0, 560, 0, 500)
+shopCard.Position = UDim2.new(0.5, -280, 0.5, -250)
+shopCard.BackgroundColor3 = COL_DARK
+shopCard.BorderSizePixel = 0
+shopCard.ZIndex = 101
+shopCard.Parent = shopOverlay
+mkCorner(shopCard, 16)
+local shopStroke = Instance.new("UIStroke")
+shopStroke.Color = COL_GOLD
+shopStroke.Thickness = 2
+shopStroke.Parent = shopCard
+
+local shopTitle = Instance.new("TextLabel")
+shopTitle.Size = UDim2.new(1, -48, 0, 34)
+shopTitle.Position = UDim2.new(0, 24, 0, 18)
+shopTitle.BackgroundTransparency = 1
+shopTitle.Font = Enum.Font.GothamBold
+shopTitle.TextSize = 24
+shopTitle.TextColor3 = COL_GOLD
+shopTitle.TextXAlignment = Enum.TextXAlignment.Left
+shopTitle.Text = "🛒 Shop"
+shopTitle.ZIndex = 102
+shopTitle.Parent = shopCard
+
+local shopHint = Instance.new("TextLabel")
+shopHint.Size = UDim2.new(1, -48, 0, 16)
+shopHint.Position = UDim2.new(0, 24, 0, 50)
+shopHint.BackgroundTransparency = 1
+shopHint.Font = Enum.Font.Gotham
+shopHint.TextSize = 12
+shopHint.TextColor3 = Color3.fromRGB(150, 160, 175)
+shopHint.TextXAlignment = Enum.TextXAlignment.Left
+shopHint.Text = ""
+shopHint.ZIndex = 102
+shopHint.Parent = shopCard
+
+local shopClose = Instance.new("TextButton")
+shopClose.Size = UDim2.new(0, 36, 0, 36)
+shopClose.Position = UDim2.new(1, -44, 0, 14)
+shopClose.BackgroundTransparency = 1
+shopClose.Font = Enum.Font.GothamBold
+shopClose.TextSize = 24
+shopClose.TextColor3 = Color3.fromRGB(150, 160, 175)
+shopClose.Text = "✕"
+shopClose.ZIndex = 103
+shopClose.Parent = shopCard
+
+-- Scroll-Bereich fuer die Angebote (falls viele Pakete).
+local shopList = Instance.new("ScrollingFrame")
+shopList.Size = UDim2.new(1, -32, 1, -92)
+shopList.Position = UDim2.new(0, 16, 0, 76)
+shopList.BackgroundTransparency = 1
+shopList.BorderSizePixel = 0
+shopList.ScrollBarThickness = 6
+shopList.CanvasSize = UDim2.new(0, 0, 0, 0)
+shopList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+shopList.ZIndex = 102
+shopList.Parent = shopCard
+local shopLayout = Instance.new("UIListLayout")
+shopLayout.FillDirection = Enum.FillDirection.Vertical
+shopLayout.Padding = UDim.new(0, 10)
+shopLayout.SortOrder = Enum.SortOrder.LayoutOrder
+shopLayout.Parent = shopList
+
+local shopShown = false
+
+-- Baut die Angebotsliste neu auf (nur konfigurierte Eintraege, VIP-Status).
+local function renderShop()
+	local prof = myProfile or {}
+	shopTitle.Text = if lang == "de" then "🛒 Shop" else "🛒 Shop"
+	shopHint.Text = if lang == "de"
+		then "Spass-Chips & Optik · kein Echtgeldwert"
+		else "Play chips & looks · no real-world value"
+	for _, ch in shopList:GetChildren() do
+		if not ch:IsA("UIListLayout") then
+			ch:Destroy()
+		end
+	end
+	local order = 0
+	local anyOffer = false
+
+	-- VIP-Karte (falls Pass konfiguriert).
+	if Monetization.vipAvailable() then
+		anyOffer = true
+		order += 1
+		local vip = Monetization.VIP
+		local owned = prof.vip == true
+		local card = Instance.new("Frame")
+		card.Size = UDim2.new(1, -8, 0, 150)
+		card.BackgroundColor3 = Color3.fromRGB(46, 36, 64)
+		card.BorderSizePixel = 0
+		card.LayoutOrder = order
+		card.ZIndex = 102
+		card.Parent = shopList
+		mkCorner(card, 12)
+		local vs = Instance.new("UIStroke")
+		vs.Color = COL_GOLD
+		vs.Thickness = 2
+		vs.Parent = card
+		local vt = Instance.new("TextLabel")
+		vt.Size = UDim2.new(1, -120, 0, 26)
+		vt.Position = UDim2.new(0, 14, 0, 10)
+		vt.BackgroundTransparency = 1
+		vt.Font = Enum.Font.GothamBold
+		vt.TextSize = 19
+		vt.TextColor3 = COL_GOLD
+		vt.TextXAlignment = Enum.TextXAlignment.Left
+		vt.Text = `{vip.tag} VIP`
+		vt.ZIndex = 103
+		vt.Parent = card
+		local perks = if lang == "de" then vip.perks else vip.perksEn
+		local pl = Instance.new("TextLabel")
+		pl.Size = UDim2.new(1, -28, 0, 78)
+		pl.Position = UDim2.new(0, 14, 0, 40)
+		pl.BackgroundTransparency = 1
+		pl.Font = Enum.Font.Gotham
+		pl.TextSize = 14
+		pl.TextColor3 = COL_TEXT
+		pl.TextXAlignment = Enum.TextXAlignment.Left
+		pl.TextYAlignment = Enum.TextYAlignment.Top
+		pl.Text = table.concat(perks, "\n")
+		pl.ZIndex = 103
+		pl.Parent = card
+		local buy = Instance.new("TextButton")
+		buy.Size = UDim2.new(0, 150, 0, 36)
+		buy.Position = UDim2.new(1, -164, 1, -46)
+		buy.BackgroundColor3 = if owned then Color3.fromRGB(60, 70, 88) else COL_GOLD
+		buy.TextColor3 = if owned then COL_TEXT else Color3.fromRGB(30, 26, 12)
+		buy.Font = Enum.Font.GothamBold
+		buy.TextSize = 15
+		buy.AutoButtonColor = not owned
+		buy.Text = if owned
+			then (if lang == "de" then "✓ Du bist VIP" else "✓ You're VIP")
+			else `R$ {vip.robux}`
+		buy.ZIndex = 103
+		buy.Parent = card
+		mkCorner(buy, 8)
+		if not owned then
+			buy.Activated:Connect(function()
+				playSound("click")
+				pcall(function()
+					MarketplaceService:PromptGamePassPurchase(player, vip.passId)
+				end)
+			end)
+		end
+	end
+
+	-- Chip-Pakete.
+	for _, pack in Monetization.CHIP_PACKS do
+		if Monetization.packAvailable(pack) then
+			anyOffer = true
+			order += 1
+			local card = Instance.new("Frame")
+			card.Size = UDim2.new(1, -8, 0, 66)
+			card.BackgroundColor3 = Color3.fromRGB(38, 44, 56)
+			card.BorderSizePixel = 0
+			card.LayoutOrder = order
+			card.ZIndex = 102
+			card.Parent = shopList
+			mkCorner(card, 12)
+			local nm = Instance.new("TextLabel")
+			nm.Size = UDim2.new(1, -160, 0, 24)
+			nm.Position = UDim2.new(0, 14, 0, 10)
+			nm.BackgroundTransparency = 1
+			nm.Font = Enum.Font.GothamBold
+			nm.TextSize = 16
+			nm.TextColor3 = COL_TEXT
+			nm.TextXAlignment = Enum.TextXAlignment.Left
+			nm.Text = if lang == "de" then pack.name else pack.nameEn
+			nm.ZIndex = 103
+			nm.Parent = card
+			local amt = Instance.new("TextLabel")
+			amt.Size = UDim2.new(1, -160, 0, 20)
+			amt.Position = UDim2.new(0, 14, 0, 34)
+			amt.BackgroundTransparency = 1
+			amt.Font = Enum.Font.GothamBold
+			amt.TextSize = 15
+			amt.TextColor3 = COL_GOLD
+			amt.TextXAlignment = Enum.TextXAlignment.Left
+			amt.Text = `🪙 {pack.chips}`
+			amt.ZIndex = 103
+			amt.Parent = card
+			local buy = Instance.new("TextButton")
+			buy.Size = UDim2.new(0, 130, 0, 40)
+			buy.Position = UDim2.new(1, -144, 0.5, -20)
+			buy.BackgroundColor3 = COL_GOLD
+			buy.TextColor3 = Color3.fromRGB(30, 26, 12)
+			buy.Font = Enum.Font.GothamBold
+			buy.TextSize = 15
+			buy.Text = `R$ {pack.robux}`
+			buy.ZIndex = 103
+			buy.Parent = card
+			mkCorner(buy, 8)
+			local productId = pack.productId
+			buy.Activated:Connect(function()
+				playSound("click")
+				pcall(function()
+					MarketplaceService:PromptProductPurchase(player, productId)
+				end)
+			end)
+		end
+	end
+
+	-- Keine Angebote konfiguriert -> Hinweis (Setup im Roblox-Dashboard noetig).
+	if not anyOffer then
+		local note = Instance.new("TextLabel")
+		note.Size = UDim2.new(1, -16, 0, 80)
+		note.BackgroundTransparency = 1
+		note.Font = Enum.Font.Gotham
+		note.TextSize = 15
+		note.TextColor3 = Color3.fromRGB(170, 180, 195)
+		note.TextWrapped = true
+		note.LayoutOrder = 1
+		note.ZIndex = 103
+		note.Text = if lang == "de"
+			then "Der Shop wird bald freigeschaltet. 🐄"
+			else "The shop opens soon. 🐄"
+		note.Parent = shopList
+	end
+end
+
+local function showShop()
+	shopShown = true
+	renderShop()
+	shopOverlay.Visible = true
+	scaleIn(shopCard, 0.85, 0.2)
+end
+
+local function hideShop()
+	shopShown = false
+	shopOverlay.Visible = false
+end
+
+shopClose.Activated:Connect(hideShop)
+shopBtn.Activated:Connect(showShop)
+
+-- Nach einem VIP-Kauf den Pass-Status serverseitig neu pruefen lassen.
+MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, passId, purchased)
+	if purchased and Monetization.vipAvailable() and passId == Monetization.VIP.passId then
+		pcall(function()
+			RefreshVipEvent:FireServer()
+		end)
+	end
+end)
 
 -- =====================================================================
 -- =========================== TISCH-SCREEN ============================
@@ -1418,9 +1706,14 @@ local function showScreen(name)
 	tableScreen.Visible = name == "table"
 	leaveBtn.Visible = name == "table"
 	helpBtn.Visible = name == "lobby"
-	-- Kosmetik-Menue schliesst sich, sobald man die Lobby verlaesst.
-	if name ~= "lobby" and cosmeticsShown then
-		hideCosmetics()
+	-- Kosmetik-/Shop-Menue schliesst sich, sobald man die Lobby verlaesst.
+	if name ~= "lobby" then
+		if cosmeticsShown then
+			hideCosmetics()
+		end
+		if shopShown then
+			hideShop()
+		end
 	end
 end
 
@@ -1429,7 +1722,7 @@ local function renderProfile(prof)
 		return
 	end
 	myProfile = prof
-	profileName.Text = prof.name or "Spieler"
+	profileName.Text = (prof.name or "Spieler") .. (if prof.vip then ` {Monetization.VIP.tag} VIP` else "")
 	profileWallet.Text = `🪙 {prof.wallet or 0}`
 	profileStats.Text = string.format(
 		(if lang == "de"
@@ -1629,6 +1922,9 @@ local function renderTable(view)
 		nm.TextColor3 = if p.folded then Color3.fromRGB(130, 130, 130) else COL_TEXT
 		nm.TextXAlignment = Enum.TextXAlignment.Left
 		local tags = ""
+		if p.vip then
+			tags ..= " " .. Monetization.VIP.tag
+		end
 		if p.isButton then
 			tags ..= " Ⓑ"
 		end
@@ -1874,6 +2170,9 @@ langBtn.Activated:Connect(function()
 	if cosmeticsShown then
 		renderCosmetics()
 	end
+	if shopShown then
+		renderShop()
+	end
 end)
 
 -- =====================================================================
@@ -1901,6 +2200,13 @@ StateEvent.OnClientEvent:Connect(function(view)
 		end
 		if cosmeticsShown then
 			renderCosmetics()
+		end
+		if shopShown then
+			renderShop()
+		end
+		-- Kauf-Bestaetigung (Chips), falls der Server eine meldet.
+		if view.purchase and view.purchase.chips then
+			showPurchaseToast(view.purchase.chips)
 		end
 	else
 		-- Tisch-Sicht

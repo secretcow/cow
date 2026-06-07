@@ -40,6 +40,7 @@ function Profile.default(userId, name)
 		cardBack = "default", -- ausgewaehlte Kartenrueckseite (Kosmetik)
 		tableTheme = "default", -- ausgewaehltes Tisch-Thema (Kosmetik)
 		avatarFrame = "default", -- ausgewaehlter Avatar-Rahmen (Kosmetik)
+		vip = false, -- VIP-Pass-Besitz (Laufzeit; pro Sitzung aus dem Pass abgeleitet)
 	}
 end
 
@@ -64,6 +65,9 @@ function Profile.sanitize(raw, userId, name)
 		cardBack = (type(raw.cardBack) == "string" and raw.cardBack) or "default",
 		tableTheme = (type(raw.tableTheme) == "string" and raw.tableTheme) or "default",
 		avatarFrame = (type(raw.avatarFrame) == "string" and raw.avatarFrame) or "default",
+		-- VIP wird NICHT aus dem DataStore vertraut, sondern pro Sitzung aus dem
+		-- Game-Pass-Besitz neu abgeleitet (Server setzt es nach dem Laden).
+		vip = false,
 	}
 	if name and name ~= "" then
 		p.name = name
@@ -94,6 +98,12 @@ end
 -- Markiert das Einsteiger-Tutorial als gesehen (wird einmalig pro Spieler gesetzt).
 function Profile.markTutorialDone(p)
 	p.tutorialDone = true
+	return p
+end
+
+-- Setzt das (Laufzeit-)VIP-Flag (aus dem Game-Pass-Besitz abgeleitet).
+function Profile.setVip(p, isVip)
+	p.vip = isVip == true
 	return p
 end
 
@@ -133,8 +143,10 @@ end
 -- Vergibt einmal pro Kalendertag (UTC). Aufeinanderfolgende Tage erhoehen die
 -- Streak (und damit den Bonus); eine Luecke setzt die Streak zurueck.
 -- Gibt { granted, amount, streak } zurueck.
-function Profile.claimDailyBonus(p, now)
+-- `multiplier` (optional, Default 1) skaliert den Betrag — z. B. VIP x2.
+function Profile.claimDailyBonus(p, now, multiplier)
 	now = tonumber(now) or os.time()
+	local mult = math.max(1, math.floor(tonumber(multiplier) or 1))
 	local day = math.floor(now / 86400)
 	local last = toInt(p.lastDailyDay, 0)
 	-- Schon heute (oder spaeter) beansprucht? -> nichts.
@@ -148,11 +160,11 @@ function Profile.claimDailyBonus(p, now)
 		streak = 1
 	end
 	local effective = math.min(streak, Profile.DAILY_MAX_STREAK)
-	local amount = Profile.DAILY_BASE + (effective - 1) * Profile.DAILY_STEP
+	local amount = (Profile.DAILY_BASE + (effective - 1) * Profile.DAILY_STEP) * mult
 	p.wallet = math.max(0, toInt(p.wallet, 0)) + amount
 	p.lastDailyDay = day
 	p.dailyStreak = streak
-	return { granted = true, amount = amount, streak = streak }
+	return { granted = true, amount = amount, streak = streak, vip = mult > 1 }
 end
 
 -- Schlanke Sicht fuer Anzeige/Leaderboard (ohne interne Felder).
@@ -167,6 +179,7 @@ function Profile.publicView(p)
 		cardBack = p.cardBack or "default",
 		tableTheme = p.tableTheme or "default",
 		avatarFrame = p.avatarFrame or "default",
+		vip = p.vip == true,
 	}
 end
 

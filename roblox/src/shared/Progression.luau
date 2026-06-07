@@ -79,6 +79,8 @@ Progression.CARD_BACKS = {
 	{ id = "gold", name = "Gold", nameEn = "Gold", level = 7, color = { 150, 120, 40 } },
 	{ id = "violet", name = "Violett", nameEn = "Violet", level = 10, color = { 90, 55, 140 } },
 	{ id = "midnight", name = "Mitternacht", nameEn = "Midnight", level = 15, color = { 20, 26, 52 } },
+	-- VIP-exklusiv: nicht ueber Level, sondern ueber den VIP-Pass freigeschaltet.
+	{ id = "vip_royal", name = "VIP Royal", nameEn = "VIP Royal", level = 0, vip = true, color = { 90, 30, 120 } },
 }
 
 Progression.TABLE_THEMES = {
@@ -95,6 +97,8 @@ Progression.AVATAR_FRAMES = {
 	{ id = "silver", name = "Silber", nameEn = "Silver", level = 5, color = { 180, 190, 200 } },
 	{ id = "gold", name = "Gold", nameEn = "Gold", level = 8, color = { 220, 180, 70 } },
 	{ id = "diamond", name = "Diamant", nameEn = "Diamond", level = 12, color = { 120, 210, 230 } },
+	-- VIP-exklusiv (per VIP-Pass freigeschaltet, nicht ueber das Level).
+	{ id = "vip_crown", name = "VIP Krone", nameEn = "VIP Crown", level = 0, vip = true, color = { 240, 205, 80 } },
 }
 
 local CATALOGS = {
@@ -128,11 +132,15 @@ function Progression.defaultId(category)
 	return (list and list[1] and list[1].id) or "default"
 end
 
--- Ist das Item beim gegebenen Level freigeschaltet?
-function Progression.isUnlocked(level, category, id)
+-- Ist das Item freigeschaltet? VIP-Items brauchen `isVip`, alle anderen das
+-- noetige Level. `isVip` ist optional (Default false) — rueckwaertskompatibel.
+function Progression.isUnlocked(level, category, id, isVip)
 	local item = Progression.find(category, id)
 	if not item then
 		return false
+	end
+	if item.vip then
+		return isVip == true
 	end
 	return (tonumber(level) or 1) >= item.level
 end
