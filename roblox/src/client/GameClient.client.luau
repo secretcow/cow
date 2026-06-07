@@ -69,6 +69,38 @@ root.BackgroundColor3 = COL_BG
 root.BorderSizePixel = 0
 root.Parent = gui
 
+-- ---- Mobile-/Tablet-Skalierung ----
+-- Die UI ist fuer eine 1280x720-Designflaeche gebaut. UIScale skaliert alle
+-- Pixel-Offsets (und damit die ganze Oberflaeche) so, dass sie auf jedem
+-- Geraet — Handy, Tablet, Desktop — vollstaendig hineinpasst.
+local DESIGN_W, DESIGN_H = 1280, 720
+local uiScale = Instance.new("UIScale")
+uiScale.Parent = root
+local camera = workspace.CurrentCamera
+local function fitScale()
+	local cam = workspace.CurrentCamera
+	if not cam then
+		return
+	end
+	local vp = cam.ViewportSize
+	if vp.X < 1 or vp.Y < 1 then
+		return
+	end
+	local s = math.min(vp.X / DESIGN_W, vp.Y / DESIGN_H)
+	uiScale.Scale = math.clamp(s, 0.5, 1.4)
+end
+fitScale()
+if camera then
+	camera:GetPropertyChangedSignal("ViewportSize"):Connect(fitScale)
+end
+workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+	camera = workspace.CurrentCamera
+	fitScale()
+	if camera then
+		camera:GetPropertyChangedSignal("ViewportSize"):Connect(fitScale)
+	end
+end)
+
 -- Kopfzeile (immer sichtbar)
 local header = Instance.new("TextLabel")
 header.Size = UDim2.new(1, -20, 0, 56)
