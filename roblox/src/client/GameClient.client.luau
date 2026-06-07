@@ -11,6 +11,8 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Cards = require(Shared:WaitForChild("Cards"))
@@ -34,6 +36,13 @@ local lang = "de"
 local lastView = nil
 local myProfile = nil
 local currentScreen = "lobby"
+
+-- ---- Polish: Zustand fuer Animationen/Sounds ----
+local prevCommunityLen = 0 -- wie viele Gemeinschaftskarten zuletzt lagen (nur neue animieren)
+local potShown = 0 -- aktuell angezeigter Pot-Wert (fuer Count-up)
+local prevYourTurn = false -- war ich letzten Frame schon am Zug? (Puls nur bei Wechsel)
+local potCountGen = 0 -- Generations-Token fuer den Pot-Count-up
+local winSoundPlayed = false -- Gewinn-Sound nur einmal pro Match abspielen
 
 -- ---- Farb-/Stil-Konstanten ----
 local COL_BG = Color3.fromRGB(13, 18, 24)
@@ -159,6 +168,74 @@ local function mkCorner(parent, r)
 	c.CornerRadius = UDim.new(0, r)
 	c.Parent = parent
 	return c
+end
+
+-- ---- Sound-Manager ----
+-- Asset-IDs leer lassen = stummes No-op. Trage hier eigene rbxassetid ein
+-- (z.B. "rbxassetid://1234567"), um Effekte zu aktivieren. Ohne IDs schippt
+-- alles sauber und tonlos.
+local SOUND_IDS = {
+	deal = "", -- Karte austeilen
+	turn = "", -- du bist am Zug
+	win = "", -- Hand/Match gewonnen
+	chip = "", -- Pot/Einsatz
+	click = "", -- Button-Klick
+}
+local sounds = {}
+for name, id in SOUND_IDS do
+	local s = Instance.new("Sound")
+	s.Name = "sfx_" .. name
+	s.SoundId = id
+	s.Volume = 0.5
+	s.Parent = SoundService
+	sounds[name] = s
+end
+local function playSound(name)
+	local s = sounds[name]
+	if s and s.SoundId ~= "" then
+		s:Play()
+	end
+end
+
+-- ---- Animations-Helfer ----
+-- Skaliert ein GuiObject von `from` auf 1 hoch (Einblend-/Puls-Effekt).
+local function scaleIn(obj, from, duration)
+	local sc = Instance.new("UIScale")
+	sc.Scale = from
+	sc.Parent = obj
+	local tw = TweenService:Create(
+		sc,
+		TweenInfo.new(duration or 0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Scale = 1 }
+	)
+	tw:Play()
+	return sc
+end
+
+-- Kurzer Aufmerksamkeits-Puls (hoch und zurueck) auf einem Element.
+local pulseGen = 0
+local function pulse(obj)
+	pulseGen += 1
+	local myGen = pulseGen
+	local existing = obj:FindFirstChildOfClass("UIScale")
+	local sc = existing or Instance.new("UIScale")
+	sc.Parent = obj
+	local up = TweenService:Create(
+		sc,
+		TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Scale = 1.08 }
+	)
+	up:Play()
+	up.Completed:Connect(function()
+		if myGen ~= pulseGen then
+			return
+		end
+		TweenService:Create(
+			sc,
+			TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Scale = 1 }
+		):Play()
+	end)
 end
 
 -- =====================================================================
@@ -587,6 +664,9 @@ local function mkActionButton(text: string)
 	b.Visible = false
 	b.Parent = actionBar
 	mkCorner(b, 8)
+	b.Activated:Connect(function()
+		playSound("click")
+	end)
 	return b
 end
 
@@ -758,13 +838,16 @@ confirmQuick.Activated:Connect(function()
 end)
 
 -- ---- Karten-Widgets ----
-local function mkCard(parent, card, hidden: boolean)
+local function mkCard(parent, card, hidden: boolean, animate: boolean)
 	local f = Instance.new("Frame")
 	f.Size = UDim2.new(0, 64, 0, 84)
 	f.BackgroundColor3 = if hidden then COL_CARD_BACK else COL_CARD
 	f.BorderSizePixel = 0
 	f.Parent = parent
 	mkCorner(f, 8)
+	if animate then
+		scaleIn(f, 0.4, 0.24)
+	end
 	if hidden then
 		local q = Instance.new("TextLabel")
 		q.Size = UDim2.new(1, 0, 1, 0)
@@ -888,7 +971,37 @@ local function renderTable(view)
 		end
 	end
 
-	potLabel.Text = `Pot: {view.totalPot or 0} 🪙`
+	-- Pot mit Count-up (steigt sichtbar auf den neuen Wert).
+	do
+		local target = view.totalPot or 0
+		potCountGen += 1
+		local myGen = potCountGen
+		if potShown == target then
+			potLabel.Text = `Pot: {target} 🪙`
+		else
+			if target > potShown then
+				playSound("chip")
+			end
+			task.spawn(function()
+				local steps = 12
+				local start = potShown
+				local diff = target - start
+				for i = 1, steps do
+					if myGen ~= potCountGen then
+						return
+					end
+					local v = math.floor(start + diff * (i / steps) + 0.5)
+					potShown = v
+					potLabel.Text = `Pot: {v} 🪙`
+					task.wait(0.02)
+				end
+				if myGen == potCountGen then
+					potShown = target
+					potLabel.Text = `Pot: {target} 🪙`
+				end
+			end)
+		end
+	end
 
 	-- Untertitel: Code + Blinds + Modus
 	local sub = ""
@@ -906,11 +1019,17 @@ local function renderTable(view)
 	end
 	subHeader.Text = sub
 
-	-- Community
+	-- Community (nur neu hinzugekommene Karten einblenden + Deal-Sound)
 	clear(community)
-	for _, c in view.community do
-		mkCard(community, c, false)
+	local comLen = #view.community
+	local newCards = comLen > prevCommunityLen and comLen <= 5
+	for i, c in view.community do
+		mkCard(community, c, false, newCards and i > prevCommunityLen)
 	end
+	if newCards then
+		playSound("deal")
+	end
+	prevCommunityLen = comLen
 
 	-- Stage / Zug
 	local stageTxt = `Hand #{view.handNo or 0} — {tostring(view.stage)}`
@@ -938,6 +1057,24 @@ local function renderTable(view)
 		stageTxt ..= `   ·   am Zug: {tostring(view.toActId)}`
 	end
 	stageLabel.Text = stageTxt
+
+	-- "Du bist am Zug": einmaliger Puls + Sound beim Wechsel auf true.
+	local yourTurn = view.yourTurn == true
+	if yourTurn and not prevYourTurn then
+		pulse(actionBar)
+		playSound("turn")
+	end
+	prevYourTurn = yourTurn
+
+	-- Gewinn-Sound, wenn ICH das Match gewinne (nur einmal pro Match).
+	if view.matchOver then
+		if not winSoundPlayed and view.matchWinnerId == (me and me.id) then
+			playSound("win")
+		end
+		winSoundPlayed = true
+	else
+		winSoundPlayed = false
+	end
 
 	-- Sitze
 	clear(seatRow)
