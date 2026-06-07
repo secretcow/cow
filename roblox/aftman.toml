@@ -1,0 +1,5 @@
+# Aftman-Toolchain fuer das KuhPoker-Roblox-Projekt.
+# Installation der Tools:  aftman install   (im Ordner roblox/)
+# Danach stehen `rojo serve` / `rojo build` in der korrekten Version bereit.
+[tools]
+rojo = "rojo-rbx/rojo@7.4.4"
