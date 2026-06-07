@@ -31,6 +31,10 @@ local ROOM_TTL = 120 -- Sek.: Raum lebt weiter, solange niemand verbunden ist
 local RUNOUT_STEP = 1.3 -- Sek. pro Run-out-Strasse
 local DISCONNECT_GRACE = 30 -- Sek. bis Auto-Fold eines getrennten Spielers
 local CHAT_HISTORY = 40 -- gespeicherte Chat-Nachrichten pro Raum
+-- Auto-Pilot fuer oeffentliche Quick-Play-Tische (kein Host noetig):
+local AUTO_START_DELAY = 4 -- Sek. Countdown bis Spielstart (laesst weitere Spieler rein)
+local HAND_DELAY = 3 -- Sek. Pause bis zur naechsten Hand
+local MATCH_END_DELAY = 6 -- Sek. nach Match-Ende bis Tisch wieder oeffnet
 
 -- ---- Remotes anlegen ----
 local Remotes = Instance.new("Folder")
@@ -52,6 +56,7 @@ end
 
 local CreateRoomFn = mkFunction("CreateRoom")
 local JoinRoomFn = mkFunction("JoinRoom")
+local QuickPlayFn = mkFunction("QuickPlay")
 local LeaveRoomEvent = mkEvent("LeaveRoom")
 local StartHandEvent = mkEvent("StartHand")
 local ActionEvent = mkEvent("Action")
@@ -139,6 +144,7 @@ local function tableView(room, id)
 	v.hostId = room.hostId
 	v.chat = room.chat
 	v.youAreHost = room.hostId == id
+	v.auto = room.public == true -- oeffentlicher Auto-Pilot-Tisch (kein manueller Start)
 	v.canStart = (not room.table) and connectedCount(room) >= 2
 	-- Verbindungsstatus je Sitz fuer die UI nachreichen.
 	for _, pv in v.players do
@@ -199,6 +205,10 @@ local function pushProfiles(room)
 	end
 end
 
+-- Vorwaerts-Deklaration: wird weiter unten definiert, aber schon vom Run-out
+-- und von scheduleAutoAct referenziert (laeuft erst zur Laufzeit -> Upvalue gesetzt).
+local autoPilotPublic
+
 -- ---- Statistiken verbuchen (idempotent pro Hand/Match) ----
 local function recordResults(room)
 	local t = room.table
@@ -253,6 +263,8 @@ local function maybeDriveRunout(room)
 			end
 		end
 		room.runoutBusy = false
+		-- Run-out fertig (Stage = handover): ggf. naechste Hand auf Auto-Tischen.
+		autoPilotPublic(room)
 	end)
 end
 
@@ -303,9 +315,108 @@ local function scheduleAutoAct(room, immediate)
 			recordResults(room)
 			broadcastRoom(room)
 			maybeDriveRunout(room)
+			autoPilotPublic(room)
 		end
 		scheduleAutoAct(room) -- naechster getrennter Spieler?
 	end)
+end
+
+-- ---- Auto-Pilot fuer oeffentliche Quick-Play-Tische ----
+-- Oeffentliche Tische brauchen keinen Host: bei >=2 Spielern startet das Spiel
+-- automatisch, Haende laufen selbsttaetig weiter, nach Match-Ende oeffnet der
+-- Tisch wieder fuer neue Spieler. Wird nach jeder relevanten Transition aufgerufen.
+-- Ein einziger Generationen-Token (autoGen) macht den jeweils letzten geplanten
+-- Schritt gueltig und verwirft veraltete Timer.
+function autoPilotPublic(room)
+	if not room.public then
+		return
+	end
+	local t = room.table
+
+	-- (1) Kein laufendes Match: bei genug Spielern Start einplanen.
+	if not room.started then
+		if connectedCount(room) >= 2 then
+			room.autoGen = (room.autoGen or 0) + 1
+			local gen = room.autoGen
+			task.delay(AUTO_START_DELAY, function()
+				if room.autoGen ~= gen or not rm:getRoom(room.code) then
+					return
+				end
+				if room.started or connectedCount(room) < 2 then
+					return
+				end
+				local res = rm:startMatch(room.code)
+				if res.error then
+					return
+				end
+				room.table.autoRunout = false
+				room.table:startHand()
+				recordResults(room)
+				broadcastRoom(room)
+				maybeDriveRunout(room)
+				scheduleAutoAct(room)
+				autoPilotPublic(room)
+			end)
+		end
+		return
+	end
+
+	if not t then
+		return
+	end
+
+	-- (2) Match vorbei: Tisch nach kurzer Pause wieder oeffnen (getrennte Sitze raeumen).
+	if t.matchOver then
+		room.autoGen = (room.autoGen or 0) + 1
+		local gen = room.autoGen
+		task.delay(MATCH_END_DELAY, function()
+			if room.autoGen ~= gen or not rm:getRoom(room.code) then
+				return
+			end
+			-- Getrennte Spieler aus dem Tisch werfen.
+			for _, p in table.clone(room.players) do
+				if not room.connected[p.id] then
+					local r = rm:leaveRoom(room.code, p.id)
+					playerRoom[p.id] = nil
+					ProfileStore.release(p.id)
+					if r.destroyed then
+						return -- Raum ist weg
+					end
+					room.connected[p.id] = nil
+				end
+			end
+			if not rm:getRoom(room.code) then
+				return
+			end
+			rm:reopen(room.code)
+			room.matchRecorded = false
+			room.lastHandRecorded = nil
+			broadcastRoom(room)
+			autoPilotPublic(room)
+		end)
+		return
+	end
+
+	-- (3) Zwischen den Haenden: naechste Hand automatisch geben.
+	if t.stage == "handover" then
+		room.autoGen = (room.autoGen or 0) + 1
+		local gen = room.autoGen
+		task.delay(HAND_DELAY, function()
+			if room.autoGen ~= gen or not (rm:getRoom(room.code) and room.table) then
+				return
+			end
+			if room.table.matchOver then
+				autoPilotPublic(room)
+				return
+			end
+			room.table:startHand()
+			recordResults(room)
+			broadcastRoom(room)
+			maybeDriveRunout(room)
+			scheduleAutoAct(room)
+			autoPilotPublic(room)
+		end)
+	end
 end
 
 -- ---- Raum-Aufraeumen (TTL, wenn niemand verbunden) ----
@@ -338,10 +449,14 @@ local function maybeScheduleCleanup(room)
 	end)
 end
 
--- Initialisiert Laufzeitfelder eines frisch erstellten Raums.
+-- Initialisiert Laufzeitfelder eines frisch erstellten Raums (idempotent).
 local function initRoomRuntime(room)
-	room.connected = room.connected or {}
-	room.chat = room.chat or {}
+	if room._inited then
+		return
+	end
+	room._inited = true
+	room.connected = {}
+	room.chat = {}
 	room.matchRecorded = false
 	room.lastHandRecorded = nil
 end
@@ -393,6 +508,43 @@ JoinRoomFn.OnServerInvoke = function(player, code)
 	playerRoom[id] = code
 	cancelCleanup(room)
 	broadcastRoom(room)
+	return { ok = true, code = code }
+end
+
+-- Quick-Play: setzt den Spieler sofort an einen offenen oeffentlichen Tisch
+-- (oder erstellt einen neuen). Kein Code, kein Host noetig — Auto-Pilot startet.
+QuickPlayFn.OnServerInvoke = function(player)
+	local id = idOf(player)
+	if playerRoom[id] then
+		return { error = "Du bist bereits an einem Tisch." }
+	end
+	ProfileStore.load(id, player.Name)
+	local code = rm:findJoinablePublic()
+	if code then
+		local res = rm:joinRoom(code, { id = id, name = player.Name })
+		if res.error then
+			code = nil -- Rennen verloren (gerade voll/gestartet) -> neuen Tisch
+		end
+	end
+	if not code then
+		code = rm:createRoom({ id = id, name = player.Name }, {
+			public = true,
+			cash = false,
+			tournament = false,
+			startingStack = 1000,
+			maxPlayers = 6,
+		})
+	end
+	if not code then
+		return { error = "Kein Tisch verfuegbar." }
+	end
+	local room = rm:getRoom(code)
+	initRoomRuntime(room)
+	room.connected[id] = true
+	playerRoom[id] = code
+	cancelCleanup(room)
+	broadcastRoom(room)
+	autoPilotPublic(room)
 	return { ok = true, code = code }
 end
 
@@ -474,6 +626,7 @@ ActionEvent.OnServerEvent:Connect(function(player, atype, amount)
 	broadcastRoom(room)
 	maybeDriveRunout(room)
 	scheduleAutoAct(room)
+	autoPilotPublic(room)
 end)
 
 RebuyEvent.OnServerEvent:Connect(function(player, amount)

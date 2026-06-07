@@ -84,9 +84,33 @@ function RoomManager:createRoom(hostDef, opts)
 		settings = clampSettings(opts),
 		table = nil,
 		started = false,
+		public = not not (opts and opts.public), -- oeffentlicher Matchmaking-Tisch?
 	}
 	self.rooms[code] = room
 	return code, room
+end
+
+-- Sucht einen offenen, oeffentlichen Tisch zum Beitreten (Matchmaking).
+-- Liefert den Code des ersten passenden Tisches (Warte­phase, nicht voll) oder nil.
+function RoomManager:findJoinablePublic()
+	for code, room in self.rooms do
+		if room.public and not room.started and #room.players < room.settings.maxPlayers then
+			return code
+		end
+	end
+	return nil
+end
+
+-- Oeffnet einen oeffentlichen Tisch nach Match-Ende wieder fuer den Wartepool:
+-- Engine verwerfen, Sitze bleiben bestehen, neue Spieler koennen wieder beitreten.
+function RoomManager:reopen(code)
+	local room = self.rooms[code]
+	if not room then
+		return false
+	end
+	room.table = nil
+	room.started = false
+	return true
 end
 
 function RoomManager:getRoom(code)

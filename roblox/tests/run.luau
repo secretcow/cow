@@ -406,6 +406,34 @@ do
 	ok(rm:roomCount() == 2, "beide Raeume existieren")
 end
 
+print("== RoomManager: Quick-Play (oeffentliche Tische) ==")
+do
+	local rm = RoomManager.new()
+	-- Privater Tisch (Standard) wird vom Matchmaking ignoriert.
+	rm:createRoom({ id = "priv", name = "P" })
+	ok(rm:findJoinablePublic() == nil, "privater Tisch ist nicht oeffentlich beitretbar")
+
+	-- Oeffentlicher Tisch wird gefunden.
+	local pub = rm:createRoom({ id = "host", name = "H" }, { public = true, maxPlayers = 2 })
+	ok(rm:getRoom(pub).public == true, "public-Flag gesetzt")
+	ok(rm:findJoinablePublic() == pub, "oeffentlicher Wartetisch wird gefunden")
+
+	-- Voll -> nicht mehr beitretbar.
+	rm:joinRoom(pub, { id = "p2", name = "Q" })
+	ok(rm:findJoinablePublic() == nil, "voller Tisch wird nicht mehr gefunden")
+
+	-- Match gestartet -> nicht beitretbar; reopen() macht ihn wieder verfuegbar.
+	rm:startMatch(pub)
+	ok(rm:getRoom(pub).started == true, "Match gestartet")
+	ok(rm:findJoinablePublic() == nil, "laufender Tisch wird nicht gefunden")
+	rm:reopen(pub)
+	ok(rm:getRoom(pub).started == false and rm:getRoom(pub).table == nil, "reopen: zurueck in Wartephase")
+	-- Noch voll (2/2 Sitze) -> erst nach Freiwerden eines Sitzes wieder beitretbar.
+	ok(rm:findJoinablePublic() == nil, "nach reopen, aber noch voll -> nicht gefunden")
+	rm:leaveRoom(pub, "p2")
+	ok(rm:findJoinablePublic() == pub, "nach Freiwerden eines Sitzes wieder gefunden")
+end
+
 -- ===================== Profile (Wallet + Statistiken) =====================
 print("== Profile: Default + Sanitize ==")
 do

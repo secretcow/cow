@@ -19,6 +19,7 @@ local Strings = require(Shared:WaitForChild("Strings"))
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local CreateRoomFn = Remotes:WaitForChild("CreateRoom")
 local JoinRoomFn = Remotes:WaitForChild("JoinRoom")
+local QuickPlayFn = Remotes:WaitForChild("QuickPlay")
 local LeaveRoomEvent = Remotes:WaitForChild("LeaveRoom")
 local StartHandEvent = Remotes:WaitForChild("StartHand")
 local ActionEvent = Remotes:WaitForChild("Action")
@@ -212,10 +213,22 @@ profileStats.TextYAlignment = Enum.TextYAlignment.Top
 profileStats.Text = ""
 profileStats.Parent = profileCard
 
+-- ---- Schnell spielen (Matchmaking) ----
+local quickBtn = Instance.new("TextButton")
+quickBtn.Size = UDim2.new(0, 860, 0, 56)
+quickBtn.Position = UDim2.new(0.5, -430, 0, 140)
+quickBtn.BackgroundColor3 = COL_GOLD
+quickBtn.TextColor3 = Color3.fromRGB(30, 26, 12)
+quickBtn.Font = Enum.Font.GothamBold
+quickBtn.TextSize = 22
+quickBtn.Text = "⚡ Schnell spielen"
+quickBtn.Parent = lobbyScreen
+mkCorner(quickBtn, 12)
+
 -- ---- Tisch erstellen ----
 local createCard = Instance.new("Frame")
 createCard.Size = UDim2.new(0, 420, 0, 260)
-createCard.Position = UDim2.new(0.5, -430, 0, 144)
+createCard.Position = UDim2.new(0.5, -430, 0, 212)
 createCard.BackgroundColor3 = COL_DARK
 createCard.BorderSizePixel = 0
 createCard.Parent = lobbyScreen
@@ -323,7 +336,7 @@ mkCorner(createBtn, 8)
 -- ---- Tisch beitreten ----
 local joinCard = Instance.new("Frame")
 joinCard.Size = UDim2.new(0, 420, 0, 200)
-joinCard.Position = UDim2.new(0.5, 10, 0, 144)
+joinCard.Position = UDim2.new(0.5, 10, 0, 212)
 joinCard.BackgroundColor3 = COL_DARK
 joinCard.BorderSizePixel = 0
 joinCard.Parent = lobbyScreen
@@ -377,7 +390,7 @@ mkCorner(joinBtn, 8)
 
 local lobbyError = Instance.new("TextLabel")
 lobbyError.Size = UDim2.new(0, 860, 0, 24)
-lobbyError.Position = UDim2.new(0.5, -430, 0, 414)
+lobbyError.Position = UDim2.new(0.5, -430, 0, 482)
 lobbyError.BackgroundTransparency = 1
 lobbyError.Font = Enum.Font.GothamBold
 lobbyError.TextSize = 15
@@ -799,6 +812,7 @@ local function renderLobby()
 	joinHint.Text = if lang == "de" then "Code vom Host eingeben:" else "Enter the host's code:"
 	createBtn.Text = if lang == "de" then "Tisch erstellen" else "Create table"
 	joinBtn.Text = if lang == "de" then "Beitreten" else "Join"
+	quickBtn.Text = if lang == "de" then "⚡ Schnell spielen" else "⚡ Quick play"
 	refreshSettingBtns()
 	renderProfile(myProfile)
 end
@@ -844,7 +858,11 @@ local function renderTable(view)
 	-- Stage / Zug
 	local stageTxt = `Hand #{view.handNo or 0} — {tostring(view.stage)}`
 	if view.waiting then
-		if view.youAreHost then
+		if view.auto then
+			stageTxt = if view.canStart
+				then (if lang == "de" then "⏳ Spiel startet gleich…" else "⏳ Starting soon…")
+				else (if lang == "de" then "Warte auf Gegner…" else "Waiting for opponents…")
+		elseif view.youAreHost then
 			stageTxt = if view.canStart
 				then (if lang == "de" then "Bereit — starte die erste Hand!" else "Ready — start the first hand!")
 				else (if lang == "de" then "Warte auf Mitspieler…" else "Waiting for players…")
@@ -982,7 +1000,11 @@ local function renderTable(view)
 	-- Aktionen
 	local a = view.actions
 	startBtn.Text = if lang == "de" then "Hand starten" else "Start hand"
-	startBtn.Visible = view.youAreHost == true and view.betweenHands == true and not view.matchOver
+	-- Auto-Tische (Quick-Play) starten ohne manuellen Knopf.
+	startBtn.Visible = view.auto ~= true
+		and view.youAreHost == true
+		and view.betweenHands == true
+		and not view.matchOver
 	startBtn.Active = (not view.waiting) or view.canStart == true
 	startBtn.AutoButtonColor = startBtn.Active
 	startBtn.BackgroundColor3 = if startBtn.Active then Color3.fromRGB(40, 160, 90) else Color3.fromRGB(70, 90, 78)
@@ -1018,6 +1040,21 @@ createBtn.Activated:Connect(function()
 	local ok, res = pcall(function()
 		return CreateRoomFn:InvokeServer(settings)
 	end)
+	if not ok then
+		lobbyError.Text = if lang == "de" then "Verbindungsfehler." else "Connection error."
+	elseif res and res.error then
+		lobbyError.Text = res.error
+	end
+	-- Erfolg: Server sendet automatisch die Tisch-Sicht (StateEvent).
+end)
+
+quickBtn.Activated:Connect(function()
+	lobbyError.Text = ""
+	quickBtn.Text = if lang == "de" then "Suche Tisch…" else "Finding table…"
+	local ok, res = pcall(function()
+		return QuickPlayFn:InvokeServer()
+	end)
+	quickBtn.Text = if lang == "de" then "⚡ Schnell spielen" else "⚡ Quick play"
 	if not ok then
 		lobbyError.Text = if lang == "de" then "Verbindungsfehler." else "Connection error."
 	elseif res and res.error then
