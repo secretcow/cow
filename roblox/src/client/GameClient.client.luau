@@ -1,8 +1,9 @@
 --!nonstrict
--- KuhPoker — Roblox-Client (Tisch-UI).
--- Empfaengt die Spielsicht (view) vom Server und rendert Tisch, Community-Karten,
--- Pot, Sitze, Log und Aktionen. Nutzt die geteilte i18n-Schicht (Shared.Strings)
--- fuer die Log-Uebersetzung — wortgleich zur Web-Version.
+-- KuhPoker — Roblox-Client (Lobby + Tisch-UI).
+-- Empfaengt die Spielsicht (view) vom Server und rendert je nach view.screen
+-- entweder die Lobby (Profil + Tisch erstellen/beitreten) oder den Tisch
+-- (Community-Karten, Pot, Sitze, Log, Aktionen, Chat, Equities).
+-- Nutzt die geteilte i18n-Schicht (Shared.Strings) fuer die Log-Uebersetzung.
 --
 -- Hinweis: Diese UI ist programmatisch aufgebaut (keine .rbxlx-Assets noetig),
 -- damit das ganze Projekt aus Rojo heraus lauffaehig ist.
@@ -16,9 +17,13 @@ local Cards = require(Shared:WaitForChild("Cards"))
 local Strings = require(Shared:WaitForChild("Strings"))
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local CreateRoomFn = Remotes:WaitForChild("CreateRoom")
+local JoinRoomFn = Remotes:WaitForChild("JoinRoom")
+local LeaveRoomEvent = Remotes:WaitForChild("LeaveRoom")
 local StartHandEvent = Remotes:WaitForChild("StartHand")
 local ActionEvent = Remotes:WaitForChild("Action")
 local RebuyEvent = Remotes:WaitForChild("Rebuy")
+local ChatEvent = Remotes:WaitForChild("Chat")
 local StateEvent = Remotes:WaitForChild("State")
 
 local player = Players.LocalPlayer
@@ -26,6 +31,8 @@ local playerGui = player:WaitForChild("PlayerGui")
 
 local lang = "de"
 local lastView = nil
+local myProfile = nil
+local currentScreen = "lobby"
 
 -- ---- Farb-/Stil-Konstanten ----
 local COL_BG = Color3.fromRGB(13, 18, 24)
@@ -40,7 +47,6 @@ local COL_GOLD = Color3.fromRGB(240, 195, 70)
 local function suitColor(suit: number?): Color3
 	local s = suit and Cards.suitById(suit)
 	if s then
-		-- "#rrggbb" -> Color3
 		local hex = s.color:gsub("#", "")
 		local r = tonumber(hex:sub(1, 2), 16) or 0
 		local g = tonumber(hex:sub(3, 4), 16) or 0
@@ -63,18 +69,7 @@ root.BackgroundColor3 = COL_BG
 root.BorderSizePixel = 0
 root.Parent = gui
 
--- Filz/Tisch in der Mitte
-local felt = Instance.new("Frame")
-felt.Size = UDim2.new(0, 720, 0, 360)
-felt.Position = UDim2.new(0.5, -360, 0, 80)
-felt.BackgroundColor3 = COL_FELT
-felt.BorderSizePixel = 0
-felt.Parent = root
-local feltCorner = Instance.new("UICorner")
-feltCorner.CornerRadius = UDim.new(0, 180)
-feltCorner.Parent = felt
-
--- Kopfzeile
+-- Kopfzeile (immer sichtbar)
 local header = Instance.new("TextLabel")
 header.Size = UDim2.new(1, -20, 0, 56)
 header.Position = UDim2.new(0, 10, 0, 12)
@@ -87,7 +82,7 @@ header.Text = "🐄 KuhPoker"
 header.Parent = root
 
 local subHeader = Instance.new("TextLabel")
-subHeader.Size = UDim2.new(1, -20, 0, 20)
+subHeader.Size = UDim2.new(1, -240, 0, 20)
 subHeader.Position = UDim2.new(0, 10, 0, 44)
 subHeader.BackgroundTransparency = 1
 subHeader.TextColor3 = COL_TEXT
@@ -97,7 +92,7 @@ subHeader.TextXAlignment = Enum.TextXAlignment.Left
 subHeader.Text = ""
 subHeader.Parent = root
 
--- Sprach-Umschalter
+-- Sprach-Umschalter (immer sichtbar)
 local langBtn = Instance.new("TextButton")
 langBtn.Size = UDim2.new(0, 60, 0, 32)
 langBtn.Position = UDim2.new(1, -70, 0, 16)
@@ -111,7 +106,272 @@ local langCorner = Instance.new("UICorner")
 langCorner.CornerRadius = UDim.new(0, 8)
 langCorner.Parent = langBtn
 
--- Pot-Anzeige (Mitte)
+-- Verlassen-Knopf (nur am Tisch sichtbar)
+local leaveBtn = Instance.new("TextButton")
+leaveBtn.Size = UDim2.new(0, 92, 0, 32)
+leaveBtn.Position = UDim2.new(1, -170, 0, 16)
+leaveBtn.BackgroundColor3 = Color3.fromRGB(150, 60, 60)
+leaveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+leaveBtn.Font = Enum.Font.GothamBold
+leaveBtn.TextSize = 14
+leaveBtn.Text = "Verlassen"
+leaveBtn.Visible = false
+leaveBtn.Parent = root
+local leaveCorner = Instance.new("UICorner")
+leaveCorner.CornerRadius = UDim.new(0, 8)
+leaveCorner.Parent = leaveBtn
+
+local function mkCorner(parent, r)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, r)
+	c.Parent = parent
+	return c
+end
+
+-- =====================================================================
+-- =========================== LOBBY-SCREEN ============================
+-- =====================================================================
+local lobbyScreen = Instance.new("Frame")
+lobbyScreen.Size = UDim2.new(1, 0, 1, -80)
+lobbyScreen.Position = UDim2.new(0, 0, 0, 80)
+lobbyScreen.BackgroundTransparency = 1
+lobbyScreen.Parent = root
+
+-- Profil-Karte
+local profileCard = Instance.new("Frame")
+profileCard.Size = UDim2.new(0, 420, 0, 120)
+profileCard.Position = UDim2.new(0.5, -210, 0, 10)
+profileCard.BackgroundColor3 = COL_DARK
+profileCard.BorderSizePixel = 0
+profileCard.Parent = lobbyScreen
+mkCorner(profileCard, 12)
+
+local profileName = Instance.new("TextLabel")
+profileName.Size = UDim2.new(1, -20, 0, 28)
+profileName.Position = UDim2.new(0, 12, 0, 8)
+profileName.BackgroundTransparency = 1
+profileName.Font = Enum.Font.GothamBold
+profileName.TextSize = 20
+profileName.TextColor3 = COL_GOLD
+profileName.TextXAlignment = Enum.TextXAlignment.Left
+profileName.Text = "—"
+profileName.Parent = profileCard
+
+local profileWallet = Instance.new("TextLabel")
+profileWallet.Size = UDim2.new(1, -20, 0, 26)
+profileWallet.Position = UDim2.new(0, 12, 0, 38)
+profileWallet.BackgroundTransparency = 1
+profileWallet.Font = Enum.Font.GothamBold
+profileWallet.TextSize = 22
+profileWallet.TextColor3 = COL_TEXT
+profileWallet.TextXAlignment = Enum.TextXAlignment.Left
+profileWallet.Text = "🪙 —"
+profileWallet.Parent = profileCard
+
+local profileStats = Instance.new("TextLabel")
+profileStats.Size = UDim2.new(1, -20, 0, 38)
+profileStats.Position = UDim2.new(0, 12, 0, 70)
+profileStats.BackgroundTransparency = 1
+profileStats.Font = Enum.Font.Gotham
+profileStats.TextSize = 13
+profileStats.TextColor3 = Color3.fromRGB(190, 200, 215)
+profileStats.TextXAlignment = Enum.TextXAlignment.Left
+profileStats.TextYAlignment = Enum.TextYAlignment.Top
+profileStats.Text = ""
+profileStats.Parent = profileCard
+
+-- ---- Tisch erstellen ----
+local createCard = Instance.new("Frame")
+createCard.Size = UDim2.new(0, 420, 0, 260)
+createCard.Position = UDim2.new(0.5, -430, 0, 144)
+createCard.BackgroundColor3 = COL_DARK
+createCard.BorderSizePixel = 0
+createCard.Parent = lobbyScreen
+mkCorner(createCard, 12)
+
+local createTitle = Instance.new("TextLabel")
+createTitle.Size = UDim2.new(1, -20, 0, 24)
+createTitle.Position = UDim2.new(0, 12, 0, 10)
+createTitle.BackgroundTransparency = 1
+createTitle.Font = Enum.Font.GothamBold
+createTitle.TextSize = 16
+createTitle.TextColor3 = COL_GOLD
+createTitle.TextXAlignment = Enum.TextXAlignment.Left
+createTitle.Text = "Tisch erstellen"
+createTitle.Parent = createCard
+
+-- Einstellungen (Zyklus-/Umschalt-Knoepfe)
+local settings = { maxPlayers = 6, startingStack = 1000, flush = false, cash = false, tournament = false }
+local STACKS = { 500, 1000, 2000, 5000 }
+
+local function mkSettingBtn(yOff)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, -24, 0, 34)
+	b.Position = UDim2.new(0, 12, 0, yOff)
+	b.BackgroundColor3 = Color3.fromRGB(44, 52, 66)
+	b.TextColor3 = COL_TEXT
+	b.Font = Enum.Font.GothamMedium
+	b.TextSize = 14
+	b.Parent = createCard
+	mkCorner(b, 8)
+	return b
+end
+
+local maxBtn = mkSettingBtn(44)
+local stackBtn = mkSettingBtn(84)
+local modeBtn = mkSettingBtn(124)
+local flushBtn = mkSettingBtn(164)
+
+local function modeLabel()
+	if settings.cash then
+		return if lang == "de" then "Modus: Cash-Game 💵" else "Mode: Cash game 💵"
+	elseif settings.tournament then
+		return if lang == "de" then "Modus: Turnier 🏆" else "Mode: Tournament 🏆"
+	end
+	return if lang == "de" then "Modus: Normal" else "Mode: Normal"
+end
+
+local function refreshSettingBtns()
+	maxBtn.Text = (if lang == "de" then "Max. Spieler: " else "Max players: ") .. settings.maxPlayers
+	stackBtn.Text = (if lang == "de" then "Start-Chips: " else "Starting chips: ") .. settings.startingStack
+	modeBtn.Text = modeLabel()
+	flushBtn.Text = (if lang == "de" then "Flush: " else "Flush: ")
+		.. (if settings.flush then "An" else "Aus")
+end
+
+maxBtn.Activated:Connect(function()
+	settings.maxPlayers += 1
+	if settings.maxPlayers > 6 then
+		settings.maxPlayers = 2
+	end
+	refreshSettingBtns()
+end)
+stackBtn.Activated:Connect(function()
+	local idx = 1
+	for i, v in STACKS do
+		if v == settings.startingStack then
+			idx = i
+		end
+	end
+	idx += 1
+	if idx > #STACKS then
+		idx = 1
+	end
+	settings.startingStack = STACKS[idx]
+	refreshSettingBtns()
+end)
+modeBtn.Activated:Connect(function()
+	-- Normal -> Turnier -> Cash -> Normal
+	if not settings.cash and not settings.tournament then
+		settings.tournament = true
+	elseif settings.tournament then
+		settings.tournament = false
+		settings.cash = true
+	else
+		settings.cash = false
+	end
+	refreshSettingBtns()
+end)
+flushBtn.Activated:Connect(function()
+	settings.flush = not settings.flush
+	refreshSettingBtns()
+end)
+
+local createBtn = Instance.new("TextButton")
+createBtn.Size = UDim2.new(1, -24, 0, 40)
+createBtn.Position = UDim2.new(0, 12, 0, 208)
+createBtn.BackgroundColor3 = Color3.fromRGB(40, 160, 90)
+createBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+createBtn.Font = Enum.Font.GothamBold
+createBtn.TextSize = 16
+createBtn.Text = "Tisch erstellen"
+createBtn.Parent = createCard
+mkCorner(createBtn, 8)
+
+-- ---- Tisch beitreten ----
+local joinCard = Instance.new("Frame")
+joinCard.Size = UDim2.new(0, 420, 0, 200)
+joinCard.Position = UDim2.new(0.5, 10, 0, 144)
+joinCard.BackgroundColor3 = COL_DARK
+joinCard.BorderSizePixel = 0
+joinCard.Parent = lobbyScreen
+mkCorner(joinCard, 12)
+
+local joinTitle = Instance.new("TextLabel")
+joinTitle.Size = UDim2.new(1, -20, 0, 24)
+joinTitle.Position = UDim2.new(0, 12, 0, 10)
+joinTitle.BackgroundTransparency = 1
+joinTitle.Font = Enum.Font.GothamBold
+joinTitle.TextSize = 16
+joinTitle.TextColor3 = COL_GOLD
+joinTitle.TextXAlignment = Enum.TextXAlignment.Left
+joinTitle.Text = "Tisch beitreten"
+joinTitle.Parent = joinCard
+
+local joinHint = Instance.new("TextLabel")
+joinHint.Size = UDim2.new(1, -24, 0, 20)
+joinHint.Position = UDim2.new(0, 12, 0, 40)
+joinHint.BackgroundTransparency = 1
+joinHint.Font = Enum.Font.Gotham
+joinHint.TextSize = 13
+joinHint.TextColor3 = Color3.fromRGB(190, 200, 215)
+joinHint.TextXAlignment = Enum.TextXAlignment.Left
+joinHint.Text = "Code vom Host eingeben:"
+joinHint.Parent = joinCard
+
+local codeInput = Instance.new("TextBox")
+codeInput.Size = UDim2.new(1, -24, 0, 48)
+codeInput.Position = UDim2.new(0, 12, 0, 66)
+codeInput.BackgroundColor3 = Color3.fromRGB(18, 22, 30)
+codeInput.TextColor3 = COL_GOLD
+codeInput.Font = Enum.Font.GothamBold
+codeInput.TextSize = 28
+codeInput.PlaceholderText = "ABCD"
+codeInput.Text = ""
+codeInput.ClearTextOnFocus = false
+codeInput.Parent = joinCard
+mkCorner(codeInput, 8)
+
+local joinBtn = Instance.new("TextButton")
+joinBtn.Size = UDim2.new(1, -24, 0, 40)
+joinBtn.Position = UDim2.new(0, 12, 0, 126)
+joinBtn.BackgroundColor3 = COL_ACCENT
+joinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+joinBtn.Font = Enum.Font.GothamBold
+joinBtn.TextSize = 16
+joinBtn.Text = "Beitreten"
+joinBtn.Parent = joinCard
+mkCorner(joinBtn, 8)
+
+local lobbyError = Instance.new("TextLabel")
+lobbyError.Size = UDim2.new(0, 860, 0, 24)
+lobbyError.Position = UDim2.new(0.5, -430, 0, 414)
+lobbyError.BackgroundTransparency = 1
+lobbyError.Font = Enum.Font.GothamBold
+lobbyError.TextSize = 15
+lobbyError.TextColor3 = Color3.fromRGB(240, 120, 120)
+lobbyError.Text = ""
+lobbyError.Parent = lobbyScreen
+
+-- =====================================================================
+-- =========================== TISCH-SCREEN ============================
+-- =====================================================================
+local tableScreen = Instance.new("Frame")
+tableScreen.Size = UDim2.new(1, 0, 1, 0)
+tableScreen.BackgroundTransparency = 1
+tableScreen.Visible = false
+tableScreen.Parent = root
+
+-- Filz/Tisch
+local felt = Instance.new("Frame")
+felt.Size = UDim2.new(0, 720, 0, 360)
+felt.Position = UDim2.new(0.5, -360, 0, 80)
+felt.BackgroundColor3 = COL_FELT
+felt.BorderSizePixel = 0
+felt.Parent = tableScreen
+mkCorner(felt, 180)
+
+-- Pot-Anzeige
 local potLabel = Instance.new("TextLabel")
 potLabel.Size = UDim2.new(0, 300, 0, 28)
 potLabel.Position = UDim2.new(0.5, -150, 0, 110)
@@ -120,14 +380,14 @@ potLabel.TextColor3 = COL_GOLD
 potLabel.Font = Enum.Font.GothamBold
 potLabel.TextSize = 20
 potLabel.Text = ""
-potLabel.Parent = root
+potLabel.Parent = tableScreen
 
--- Community-Karten-Reihe
+-- Community-Karten
 local community = Instance.new("Frame")
 community.Size = UDim2.new(0, 5 * 64 + 4 * 8, 0, 88)
 community.Position = UDim2.new(0.5, -(5 * 64 + 4 * 8) / 2, 0, 150)
 community.BackgroundTransparency = 1
-community.Parent = root
+community.Parent = tableScreen
 local commLayout = Instance.new("UIListLayout")
 commLayout.FillDirection = Enum.FillDirection.Horizontal
 commLayout.Padding = UDim.new(0, 8)
@@ -137,40 +397,38 @@ commLayout.Parent = community
 
 -- Stage-/Zug-Label
 local stageLabel = Instance.new("TextLabel")
-stageLabel.Size = UDim2.new(0, 400, 0, 26)
-stageLabel.Position = UDim2.new(0.5, -200, 0, 250)
+stageLabel.Size = UDim2.new(0, 460, 0, 26)
+stageLabel.Position = UDim2.new(0.5, -230, 0, 250)
 stageLabel.BackgroundTransparency = 1
 stageLabel.TextColor3 = COL_TEXT
 stageLabel.Font = Enum.Font.Gotham
 stageLabel.TextSize = 16
 stageLabel.Text = ""
-stageLabel.Parent = root
+stageLabel.Parent = tableScreen
 
--- Sitz-Container (unter dem Tisch, horizontal)
+-- Sitz-Container
 local seatRow = Instance.new("Frame")
-seatRow.Size = UDim2.new(0, 720, 0, 70)
+seatRow.Size = UDim2.new(0, 720, 0, 86)
 seatRow.Position = UDim2.new(0.5, -360, 0, 300)
 seatRow.BackgroundTransparency = 1
-seatRow.Parent = root
+seatRow.Parent = tableScreen
 local seatLayout = Instance.new("UIListLayout")
 seatLayout.FillDirection = Enum.FillDirection.Horizontal
 seatLayout.Padding = UDim.new(0, 8)
 seatLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 seatLayout.Parent = seatRow
 
--- Log-Feld
+-- Log-Feld (Spielverlauf)
 local logFrame = Instance.new("ScrollingFrame")
-logFrame.Size = UDim2.new(0, 320, 0, 200)
-logFrame.Position = UDim2.new(0, 10, 1, -210)
+logFrame.Size = UDim2.new(0, 320, 0, 180)
+logFrame.Position = UDim2.new(0, 10, 1, -380)
 logFrame.BackgroundColor3 = COL_DARK
 logFrame.BorderSizePixel = 0
 logFrame.ScrollBarThickness = 4
 logFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
 logFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-logFrame.Parent = root
-local logCorner = Instance.new("UICorner")
-logCorner.CornerRadius = UDim.new(0, 8)
-logCorner.Parent = logFrame
+logFrame.Parent = tableScreen
+mkCorner(logFrame, 8)
 local logLayout = Instance.new("UIListLayout")
 logLayout.Padding = UDim.new(0, 2)
 logLayout.Parent = logFrame
@@ -180,12 +438,60 @@ logPad.PaddingTop = UDim.new(0, 6)
 logPad.PaddingRight = UDim.new(0, 8)
 logPad.Parent = logFrame
 
--- Aktions-Leiste
+-- ---- Chat ----
+local chatList = Instance.new("ScrollingFrame")
+chatList.Size = UDim2.new(0, 320, 0, 150)
+chatList.Position = UDim2.new(0, 10, 1, -190)
+chatList.BackgroundColor3 = Color3.fromRGB(20, 26, 34)
+chatList.BorderSizePixel = 0
+chatList.ScrollBarThickness = 4
+chatList.CanvasSize = UDim2.new(0, 0, 0, 0)
+chatList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+chatList.Parent = tableScreen
+mkCorner(chatList, 8)
+local chatLayout = Instance.new("UIListLayout")
+chatLayout.Padding = UDim.new(0, 2)
+chatLayout.Parent = chatList
+local chatPad = Instance.new("UIPadding")
+chatPad.PaddingLeft = UDim.new(0, 8)
+chatPad.PaddingTop = UDim.new(0, 6)
+chatPad.PaddingRight = UDim.new(0, 8)
+chatPad.Parent = chatList
+
+local chatInput = Instance.new("TextBox")
+chatInput.Size = UDim2.new(0, 250, 0, 30)
+chatInput.Position = UDim2.new(0, 10, 1, -34)
+chatInput.BackgroundColor3 = Color3.fromRGB(18, 22, 30)
+chatInput.TextColor3 = COL_TEXT
+chatInput.Font = Enum.Font.Gotham
+chatInput.TextSize = 14
+chatInput.TextXAlignment = Enum.TextXAlignment.Left
+chatInput.PlaceholderText = "Nachricht…"
+chatInput.Text = ""
+chatInput.ClearTextOnFocus = false
+chatInput.Parent = tableScreen
+mkCorner(chatInput, 8)
+local chatInputPad = Instance.new("UIPadding")
+chatInputPad.PaddingLeft = UDim.new(0, 8)
+chatInputPad.Parent = chatInput
+
+local chatSend = Instance.new("TextButton")
+chatSend.Size = UDim2.new(0, 64, 0, 30)
+chatSend.Position = UDim2.new(0, 266, 1, -34)
+chatSend.BackgroundColor3 = COL_ACCENT
+chatSend.TextColor3 = Color3.fromRGB(255, 255, 255)
+chatSend.Font = Enum.Font.GothamBold
+chatSend.TextSize = 14
+chatSend.Text = "Senden"
+chatSend.Parent = tableScreen
+mkCorner(chatSend, 8)
+
+-- ---- Aktions-Leiste ----
 local actionBar = Instance.new("Frame")
 actionBar.Size = UDim2.new(0, 560, 0, 56)
 actionBar.Position = UDim2.new(1, -570, 1, -70)
 actionBar.BackgroundTransparency = 1
-actionBar.Parent = root
+actionBar.Parent = tableScreen
 local actionLayout = Instance.new("UIListLayout")
 actionLayout.FillDirection = Enum.FillDirection.Horizontal
 actionLayout.Padding = UDim.new(0, 8)
@@ -203,9 +509,7 @@ local function mkActionButton(text: string)
 	b.Text = text
 	b.Visible = false
 	b.Parent = actionBar
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, 8)
-	c.Parent = b
+	mkCorner(b, 8)
 	return b
 end
 
@@ -227,10 +531,8 @@ raisePanel.Position = UDim2.new(1, -570, 1, -190)
 raisePanel.BackgroundColor3 = COL_DARK
 raisePanel.BorderSizePixel = 0
 raisePanel.Visible = false
-raisePanel.Parent = root
-local rpCorner = Instance.new("UICorner")
-rpCorner.CornerRadius = UDim.new(0, 10)
-rpCorner.Parent = raisePanel
+raisePanel.Parent = tableScreen
+mkCorner(raisePanel, 10)
 
 local raiseValLabel = Instance.new("TextLabel")
 raiseValLabel.Size = UDim2.new(1, -20, 0, 26)
@@ -243,25 +545,20 @@ raiseValLabel.TextXAlignment = Enum.TextXAlignment.Left
 raiseValLabel.Text = "Erhöhen auf 0"
 raiseValLabel.Parent = raisePanel
 
--- Slider-Track + Fill + Knopf
 local track = Instance.new("Frame")
 track.Size = UDim2.new(1, -20, 0, 8)
 track.Position = UDim2.new(0, 10, 0, 44)
 track.BackgroundColor3 = Color3.fromRGB(60, 68, 82)
 track.BorderSizePixel = 0
 track.Parent = raisePanel
-local trackCorner = Instance.new("UICorner")
-trackCorner.CornerRadius = UDim.new(1, 0)
-trackCorner.Parent = track
+mkCorner(track, 8).CornerRadius = UDim.new(1, 0)
 
 local fill = Instance.new("Frame")
 fill.Size = UDim2.new(0, 0, 1, 0)
 fill.BackgroundColor3 = COL_ACCENT
 fill.BorderSizePixel = 0
 fill.Parent = track
-local fillCorner = Instance.new("UICorner")
-fillCorner.CornerRadius = UDim.new(1, 0)
-fillCorner.Parent = fill
+mkCorner(fill, 8).CornerRadius = UDim.new(1, 0)
 
 local knob = Instance.new("TextButton")
 knob.Size = UDim2.new(0, 22, 0, 22)
@@ -271,9 +568,7 @@ knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 knob.Text = ""
 knob.AutoButtonColor = false
 knob.Parent = track
-local knobCorner = Instance.new("UICorner")
-knobCorner.CornerRadius = UDim.new(1, 0)
-knobCorner.Parent = knob
+mkCorner(knob, 11).CornerRadius = UDim.new(1, 0)
 
 local function refreshSlider()
 	local span = math.max(1, raiseState.max - raiseState.min)
@@ -291,7 +586,6 @@ local function setRaiseVal(v)
 	refreshSlider()
 end
 
--- Quick-Buttons im Panel
 local quickRow = Instance.new("Frame")
 quickRow.Size = UDim2.new(1, -20, 0, 36)
 quickRow.Position = UDim2.new(0, 10, 0, 60)
@@ -311,9 +605,7 @@ local function mkQuick(text)
 	b.TextSize = 13
 	b.Text = text
 	b.Parent = quickRow
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, 6)
-	c.Parent = b
+	mkCorner(b, 6)
 	return b
 end
 
@@ -395,9 +687,7 @@ local function mkCard(parent, card, hidden: boolean)
 	f.BackgroundColor3 = if hidden then COL_CARD_BACK else COL_CARD
 	f.BorderSizePixel = 0
 	f.Parent = parent
-	local c = Instance.new("UICorner")
-	c.CornerRadius = UDim.new(0, 8)
-	c.Parent = f
+	mkCorner(f, 8)
 	if hidden then
 		local q = Instance.new("TextLabel")
 		q.Size = UDim2.new(1, 0, 1, 0)
@@ -425,15 +715,12 @@ local function mkCard(parent, card, hidden: boolean)
 	nameLbl.TextSize = 11
 	nameLbl.TextColor3 = Color3.fromRGB(30, 30, 30)
 	nameLbl.Parent = f
-	-- Farb-Markierung (Suit)
 	local dot = Instance.new("Frame")
 	dot.Size = UDim2.new(0, 10, 0, 10)
 	dot.Position = UDim2.new(1, -14, 0, 4)
 	dot.BackgroundColor3 = suitColor(card.suit)
 	dot.Parent = f
-	local dc = Instance.new("UICorner")
-	dc.CornerRadius = UDim.new(1, 0)
-	dc.Parent = dot
+	mkCorner(dot, 5).CornerRadius = UDim.new(1, 0)
 	return f
 end
 
@@ -445,28 +732,76 @@ local function clear(frame)
 	end
 end
 
--- ---- Rendering ----
-local function render(view)
+-- =====================================================================
+-- ============================ RENDERING ==============================
+-- =====================================================================
+local function showScreen(name)
+	currentScreen = name
+	lobbyScreen.Visible = name == "lobby"
+	tableScreen.Visible = name == "table"
+	leaveBtn.Visible = name == "table"
+end
+
+local function renderProfile(prof)
+	if not prof then
+		return
+	end
+	myProfile = prof
+	profileName.Text = prof.name or "Spieler"
+	profileWallet.Text = `🪙 {prof.wallet or 0}`
+	profileStats.Text = string.format(
+		(if lang == "de"
+			then "Matches gewonnen: %d   ·   Haende gewonnen: %d\nGroesster Pot: %d 🪙"
+			else "Matches won: %d   ·   Hands won: %d\nBiggest pot: %d 🪙"),
+		prof.matchesWon or 0,
+		prof.handsWon or 0,
+		prof.biggestPot or 0
+	)
+end
+
+local function renderLobby()
+	header.Text = "🐄 KuhPoker"
+	subHeader.Text = if lang == "de" then "Lobby — erstelle oder betritt einen Tisch" else "Lobby — create or join a table"
+	createTitle.Text = if lang == "de" then "Tisch erstellen" else "Create table"
+	joinTitle.Text = if lang == "de" then "Tisch beitreten" else "Join table"
+	joinHint.Text = if lang == "de" then "Code vom Host eingeben:" else "Enter the host's code:"
+	createBtn.Text = if lang == "de" then "Tisch erstellen" else "Create table"
+	joinBtn.Text = if lang == "de" then "Beitreten" else "Join"
+	refreshSettingBtns()
+	renderProfile(myProfile)
+end
+
+local function renderTable(view)
 	if not view then
 		return
 	end
 	local me = view.players[view.meIdx]
 
-	-- Pot
+	-- Equity-Map (Sitzindex -> Prozent)
+	local eqMap = {}
+	if view.runout and view.equities then
+		for _, e in view.equities do
+			eqMap[e.i] = e.pct
+		end
+	end
+
 	potLabel.Text = `Pot: {view.totalPot or 0} 🪙`
 
-	-- Blinds/Stage-Untertitel
-	local blindTxt = ""
+	-- Untertitel: Code + Blinds + Modus
+	local sub = ""
+	if view.code then
+		sub = `Code {view.code}`
+	end
 	if view.blinds then
-		blindTxt = `Blinds {view.blinds.sb}/{view.blinds.bb}`
+		sub ..= (if sub ~= "" then "   ·   " else "") .. `Blinds {view.blinds.sb}/{view.blinds.bb}`
 		if view.blinds.tournament and view.blinds.level then
-			blindTxt ..= ` · Stufe {view.blinds.level}`
+			sub ..= ` · Stufe {view.blinds.level}`
 		end
 	end
 	if view.cash then
-		blindTxt ..= `   💵 Cash · Buy-in {view.buyIn or 0}`
+		sub ..= `   ·   💵 Buy-in {view.buyIn or 0}`
 	end
-	subHeader.Text = blindTxt
+	subHeader.Text = sub
 
 	-- Community
 	clear(community)
@@ -476,10 +811,20 @@ local function render(view)
 
 	-- Stage / Zug
 	local stageTxt = `Hand #{view.handNo or 0} — {tostring(view.stage)}`
-	if view.matchOver then
+	if view.waiting then
+		if view.youAreHost then
+			stageTxt = if view.canStart
+				then (if lang == "de" then "Bereit — starte die erste Hand!" else "Ready — start the first hand!")
+				else (if lang == "de" then "Warte auf Mitspieler…" else "Waiting for players…")
+		else
+			stageTxt = if lang == "de" then "Warte auf den Host…" else "Waiting for the host…"
+		end
+	elseif view.matchOver then
 		stageTxt = if view.matchWinnerId == (me and me.id)
 			then "🏆 Du hast das Match gewonnen!"
 			else "Match beendet."
+	elseif view.runout then
+		stageTxt = if lang == "de" then "🃏 All-In — Karten werden aufgedeckt…" else "🃏 All-in — running it out…"
 	elseif view.yourTurn then
 		stageTxt = ">> DU BIST AM ZUG <<"
 	elseif view.toActId then
@@ -491,13 +836,11 @@ local function render(view)
 	clear(seatRow)
 	for _, p in view.players do
 		local seat = Instance.new("Frame")
-		seat.Size = UDim2.new(0, 130, 0, 66)
+		seat.Size = UDim2.new(0, 132, 0, 82)
 		seat.BackgroundColor3 = if p.isMe then Color3.fromRGB(38, 48, 64) else COL_DARK
 		seat.BorderSizePixel = 0
 		seat.Parent = seatRow
-		local sc = Instance.new("UICorner")
-		sc.CornerRadius = UDim.new(0, 8)
-		sc.Parent = seat
+		mkCorner(seat, 8)
 		if p.id == view.toActId then
 			local stroke = Instance.new("UIStroke")
 			stroke.Color = COL_GOLD
@@ -519,6 +862,9 @@ local function render(view)
 		if p.allIn then
 			tags ..= " All-In"
 		end
+		if p.connected == false then
+			tags ..= " ⚠"
+		end
 		nm.Text = (p.name or "?") .. tags
 		nm.Parent = seat
 		local st = Instance.new("TextLabel")
@@ -531,7 +877,7 @@ local function render(view)
 		st.TextXAlignment = Enum.TextXAlignment.Left
 		st.Text = `{p.stack} 🪙` .. (if p.bet and p.bet > 0 then `  (Bet {p.bet})` else "")
 		st.Parent = seat
-		-- eigene Hole-Cards mini anzeigen
+		-- eigene Hole-Cards mini
 		if p.isMe then
 			local handTxt = Instance.new("TextLabel")
 			handTxt.Size = UDim2.new(1, -8, 0, 16)
@@ -551,12 +897,24 @@ local function render(view)
 			handTxt.Text = table.concat(parts, " ")
 			handTxt.Parent = seat
 		end
+		-- Equity-Anzeige waehrend des Run-outs
+		if eqMap[p.seat] ~= nil then
+			local eq = Instance.new("TextLabel")
+			eq.Size = UDim2.new(1, -8, 0, 16)
+			eq.Position = UDim2.new(0, 4, 0, 60)
+			eq.BackgroundTransparency = 1
+			eq.Font = Enum.Font.GothamBold
+			eq.TextSize = 12
+			eq.TextColor3 = Color3.fromRGB(120, 230, 150)
+			eq.TextXAlignment = Enum.TextXAlignment.Left
+			eq.Text = `≈ {eqMap[p.seat]}%`
+			eq.Parent = seat
+		end
 	end
 
 	-- Log (uebersetzt)
 	clear(logFrame)
-	local logArr = view.log or {}
-	for _, event in logArr do
+	for _, event in (view.log or {}) do
 		local line = Instance.new("TextLabel")
 		line.Size = UDim2.new(1, -16, 0, 16)
 		line.BackgroundTransparency = 1
@@ -570,37 +928,95 @@ local function render(view)
 		line.Parent = logFrame
 	end
 
+	-- Chat
+	clear(chatList)
+	for _, msg in (view.chat or {}) do
+		local line = Instance.new("TextLabel")
+		line.Size = UDim2.new(1, -16, 0, 16)
+		line.BackgroundTransparency = 1
+		line.Font = Enum.Font.Gotham
+		line.TextSize = 13
+		line.TextColor3 = Color3.fromRGB(210, 220, 235)
+		line.TextXAlignment = Enum.TextXAlignment.Left
+		line.TextWrapped = true
+		line.AutomaticSize = Enum.AutomaticSize.Y
+		line.RichText = true
+		local safeName = (msg.name or "?"):gsub("<", "&lt;")
+		local safeText = (msg.text or ""):gsub("<", "&lt;")
+		line.Text = `<b>{safeName}:</b> {safeText}`
+		line.Parent = chatList
+	end
+
 	-- Aktionen
 	local a = view.actions
 	startBtn.Text = if lang == "de" then "Hand starten" else "Start hand"
-	startBtn.Visible = view.betweenHands == true and not view.matchOver
+	startBtn.Visible = view.youAreHost == true and view.betweenHands == true and not view.matchOver
+	startBtn.Active = (not view.waiting) or view.canStart == true
+	startBtn.AutoButtonColor = startBtn.Active
+	startBtn.BackgroundColor3 = if startBtn.Active then Color3.fromRGB(40, 160, 90) else Color3.fromRGB(70, 90, 78)
 	foldBtn.Visible = a ~= nil
 	checkCallBtn.Visible = a ~= nil
 	raiseBtn.Visible = a ~= nil and a.canRaise == true
 	if a then
 		checkCallBtn.Text = if a.canCall then `Call {a.toCall}` else "Check"
 	end
-	-- Rebuy nur im Cash, zwischen Haenden, wenn unter Buy-in
 	rebuyBtn.Visible = view.cash == true
 		and view.betweenHands == true
 		and (view.myStack or 0) < (view.buyIn or 0)
 
-	-- Raise-Panel schliessen, sobald ich nicht mehr (sinnvoll) erhoehen kann.
 	if raiseState.open and not (a and a.canRaise) then
 		closeRaisePanel()
 	end
-	-- Sprachabhaengige Labels im Panel
 	minQuick.Text = "Min"
 	potQuick.Text = "Pot"
 	maxQuick.Text = "All-In"
 	backQuick.Text = if lang == "de" then "Zurück" else "Back"
 	confirmQuick.Text = if lang == "de" then "Erhöhen" else "Raise"
+	chatSend.Text = if lang == "de" then "Senden" else "Send"
 	if raiseState.open then
 		refreshSlider()
 	end
 end
 
--- ---- Aktionen verdrahten ----
+-- =====================================================================
+-- ======================== AKTIONEN VERDRAHTEN ========================
+-- =====================================================================
+createBtn.Activated:Connect(function()
+	lobbyError.Text = ""
+	local ok, res = pcall(function()
+		return CreateRoomFn:InvokeServer(settings)
+	end)
+	if not ok then
+		lobbyError.Text = if lang == "de" then "Verbindungsfehler." else "Connection error."
+	elseif res and res.error then
+		lobbyError.Text = res.error
+	end
+	-- Erfolg: Server sendet automatisch die Tisch-Sicht (StateEvent).
+end)
+
+joinBtn.Activated:Connect(function()
+	lobbyError.Text = ""
+	local code = codeInput.Text
+	if not code or #code == 0 then
+		lobbyError.Text = if lang == "de" then "Bitte Code eingeben." else "Please enter a code."
+		return
+	end
+	local ok, res = pcall(function()
+		return JoinRoomFn:InvokeServer(code)
+	end)
+	if not ok then
+		lobbyError.Text = if lang == "de" then "Verbindungsfehler." else "Connection error."
+	elseif res and res.error then
+		lobbyError.Text = res.error
+	else
+		codeInput.Text = ""
+	end
+end)
+
+leaveBtn.Activated:Connect(function()
+	LeaveRoomEvent:FireServer()
+end)
+
 startBtn.Activated:Connect(function()
 	StartHandEvent:FireServer()
 end)
@@ -626,14 +1042,54 @@ end)
 rebuyBtn.Activated:Connect(function()
 	RebuyEvent:FireServer()
 end)
+
+local function sendChat()
+	local text = chatInput.Text
+	if text and #text > 0 then
+		ChatEvent:FireServer(text)
+		chatInput.Text = ""
+	end
+end
+chatSend.Activated:Connect(sendChat)
+chatInput.FocusLost:Connect(function(enterPressed)
+	if enterPressed then
+		sendChat()
+	end
+end)
+
 langBtn.Activated:Connect(function()
 	lang = if lang == "de" then "en" else "de"
 	langBtn.Text = string.upper(lang)
-	render(lastView)
+	if currentScreen == "table" then
+		renderTable(lastView)
+	else
+		renderLobby()
+	end
 end)
 
--- ---- Server-Zustand ----
+-- =====================================================================
+-- ============================ ZUSTAND ================================
+-- =====================================================================
 StateEvent.OnClientEvent:Connect(function(view)
-	lastView = view
-	render(view)
+	if type(view) ~= "table" then
+		return
+	end
+	if view.screen == "lobby" then
+		myProfile = view.profile or myProfile
+		showScreen("lobby")
+		renderLobby()
+	elseif view.screen == "profile" then
+		-- Profil-Update (z. B. nach Match-Ende) — Screen nicht wechseln.
+		renderProfile(view.profile)
+		if currentScreen == "lobby" then
+			renderLobby()
+		end
+	else
+		-- Tisch-Sicht
+		lastView = view
+		showScreen("table")
+		renderTable(view)
+	end
 end)
+
+renderLobby()

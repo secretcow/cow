@@ -120,10 +120,12 @@ function ProfileStore.recordMatchWin(userId, name)
 	return p
 end
 
+-- Hand-Gewinne sind haeufig: nur den Cache mutieren, NICHT bei jeder Hand in den
+-- DataStore schreiben (schont DataStore-Limits). Persistiert wird beim Match-Ende,
+-- beim Verlassen und beim Server-Shutdown.
 function ProfileStore.recordHandWin(userId, name, potSize)
 	local p = ProfileStore.load(userId, name)
 	Profile.recordHandWin(p, potSize)
-	ProfileStore.save(userId)
 	return p
 end
 
