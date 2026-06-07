@@ -68,6 +68,7 @@ local StartHandEvent = mkEvent("StartHand")
 local ActionEvent = mkEvent("Action")
 local RebuyEvent = mkEvent("Rebuy")
 local ChatEvent = mkEvent("Chat")
+local TutorialDoneEvent = mkEvent("TutorialDone")
 local StateEvent = mkEvent("State")
 
 -- ---- Zustand ----
@@ -167,6 +168,7 @@ local function lobbyPayload(player)
 		screen = "lobby",
 		profile = Profile.publicView(prof),
 		dailyBonus = ProfileStore.consumeDailyBonus(id), -- nil oder {granted,amount,streak}
+		tutorialDone = prof.tutorialDone == true, -- Einsteiger-Tutorial schon gesehen?
 	}
 end
 
@@ -870,6 +872,12 @@ ChatEvent.OnServerEvent:Connect(function(player, text)
 		table.remove(room.chat, 1)
 	end
 	broadcastRoom(room)
+end)
+
+-- Einsteiger-Tutorial gesehen: Flag dauerhaft setzen (zeigt es nie wieder an).
+TutorialDoneEvent.OnServerEvent:Connect(function(player)
+	local id = idOf(player)
+	ProfileStore.markTutorialDone(id, player.Name)
 end)
 
 -- ===================== Spieler-Ereignisse =====================

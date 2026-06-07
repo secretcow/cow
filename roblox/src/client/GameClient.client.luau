@@ -27,6 +27,7 @@ local StartHandEvent = Remotes:WaitForChild("StartHand")
 local ActionEvent = Remotes:WaitForChild("Action")
 local RebuyEvent = Remotes:WaitForChild("Rebuy")
 local ChatEvent = Remotes:WaitForChild("Chat")
+local TutorialDoneEvent = Remotes:WaitForChild("TutorialDone")
 local StateEvent = Remotes:WaitForChild("State")
 
 local player = Players.LocalPlayer
@@ -147,6 +148,21 @@ langBtn.Parent = root
 local langCorner = Instance.new("UICorner")
 langCorner.CornerRadius = UDim.new(0, 8)
 langCorner.Parent = langBtn
+
+-- Hilfe/Tutorial erneut öffnen (nur in der Lobby sichtbar)
+local helpBtn = Instance.new("TextButton")
+helpBtn.Size = UDim2.new(0, 32, 0, 32)
+helpBtn.Position = UDim2.new(1, -110, 0, 16)
+helpBtn.BackgroundColor3 = COL_DARK
+helpBtn.TextColor3 = COL_GOLD
+helpBtn.Font = Enum.Font.GothamBold
+helpBtn.TextSize = 18
+helpBtn.Text = "?"
+helpBtn.Visible = false
+helpBtn.Parent = root
+local helpCorner = Instance.new("UICorner")
+helpCorner.CornerRadius = UDim.new(0, 8)
+helpCorner.Parent = helpBtn
 
 -- Verlassen-Knopf (nur am Tisch sichtbar)
 local leaveBtn = Instance.new("TextButton")
@@ -506,6 +522,219 @@ local function showDailyBonus(b)
 		end
 	end)
 end
+
+-- =====================================================================
+-- ===================== EINSTEIGER-TUTORIAL ==========================
+-- =====================================================================
+-- Eine kurze, geblätterte Einführung für Poker-Neulinge. Wird beim ersten
+-- Login automatisch gezeigt (Server-Flag tutorialDone) und kann jederzeit
+-- über das "?"-Symbol erneut geöffnet werden.
+local TUTORIAL_STEPS = {
+	{
+		emoji = "🐄",
+		titleDe = "Willkommen bei KuhPoker!",
+		titleEn = "Welcome to KuhPoker!",
+		bodyDe = "Das ist Texas Hold'em — aber mit Tierkarten statt Spielkarten. Ziel: Bilde aus deinen Karten und den Tischkarten die beste Pokerhand und gewinne den Pot (die Chips in der Mitte).",
+		bodyEn = "This is Texas Hold'em — but with animal cards instead of a standard deck. Goal: make the best poker hand from your cards plus the table cards and win the pot (the chips in the middle).",
+	},
+	{
+		emoji = "🃏",
+		titleDe = "Deine Karten",
+		titleEn = "Your cards",
+		bodyDe = "Zu Beginn jeder Hand bekommst du 2 verdeckte Karten — nur du siehst sie. Ganz wichtig: Höhere Tiere sind stärker (🐓 Hahn = niedrig … 🐎 Pferd = hoch). Es gibt keine Farben, also auch keinen Flush.",
+		bodyEn = "Each hand you get 2 face-down cards — only you see them. Higher animals are stronger (🐓 Rooster = low … 🐎 Horse = high). There are no suits, so no flush.",
+	},
+	{
+		emoji = "🂠",
+		titleDe = "Die Tischkarten",
+		titleEn = "The table cards",
+		bodyDe = "In der Mitte werden nach und nach 5 offene Karten aufgedeckt: erst 3 (Flop), dann 1 (Turn), dann 1 (River). Sie gelten für ALLE Spieler. Deine beste 5-Karten-Kombination aus deinen 2 + diesen 5 zählt.",
+		bodyEn = "Five face-up cards are revealed over time: first 3 (flop), then 1 (turn), then 1 (river). They are shared by ALL players. Your best 5-card combo from your 2 + these 5 counts.",
+	},
+	{
+		emoji = "🎯",
+		titleDe = "Deine Aktionen",
+		titleEn = "Your actions",
+		bodyDe = "Bist du am Zug, kannst du: CHECK/CALL (mitgehen, kostenlos oder Einsatz bezahlen), RAISE (erhöhen, Druck machen) oder FOLD (aussteigen, Hand wegwerfen). Tipp: Steige aus, wenn deine Hand schwach ist — du verlierst dann nur wenig.",
+		bodyEn = "On your turn you can: CHECK/CALL (stay in, free or match the bet), RAISE (increase the bet) or FOLD (give up the hand). Tip: fold weak hands — you only lose a little.",
+	},
+	{
+		emoji = "⚡",
+		titleDe = "Los geht's!",
+		titleEn = "Let's go!",
+		bodyDe = "Drück „⚡ Schnell spielen\", um sofort an einem Tisch zu landen — gegen echte Spieler und KI-Gegner. Du startest mit Spiel-Chips; geht dir das Guthaben aus, füllen wir es wieder auf. Viel Erfolg!",
+		bodyEn = "Hit \"⚡ Quick play\" to jump straight into a table — against real players and AI opponents. You start with play chips; if you run out, we top you up. Good luck!",
+	},
+}
+
+local tutorialOverlay = Instance.new("Frame")
+tutorialOverlay.Size = UDim2.new(1, 0, 1, 0)
+tutorialOverlay.BackgroundColor3 = Color3.fromRGB(6, 9, 14)
+tutorialOverlay.BackgroundTransparency = 0.25
+tutorialOverlay.BorderSizePixel = 0
+tutorialOverlay.Visible = false
+tutorialOverlay.ZIndex = 100
+tutorialOverlay.Parent = root
+
+local tutCard = Instance.new("Frame")
+tutCard.Size = UDim2.new(0, 560, 0, 420)
+tutCard.Position = UDim2.new(0.5, -280, 0.5, -210)
+tutCard.BackgroundColor3 = COL_DARK
+tutCard.BorderSizePixel = 0
+tutCard.ZIndex = 101
+tutCard.Parent = tutorialOverlay
+mkCorner(tutCard, 16)
+local tutStroke = Instance.new("UIStroke")
+tutStroke.Color = COL_GOLD
+tutStroke.Thickness = 2
+tutStroke.Parent = tutCard
+
+local tutEmoji = Instance.new("TextLabel")
+tutEmoji.Size = UDim2.new(1, 0, 0, 72)
+tutEmoji.Position = UDim2.new(0, 0, 0, 26)
+tutEmoji.BackgroundTransparency = 1
+tutEmoji.Text = "🐄"
+tutEmoji.TextSize = 56
+tutEmoji.ZIndex = 102
+tutEmoji.Parent = tutCard
+
+local tutTitle = Instance.new("TextLabel")
+tutTitle.Size = UDim2.new(1, -48, 0, 32)
+tutTitle.Position = UDim2.new(0, 24, 0, 102)
+tutTitle.BackgroundTransparency = 1
+tutTitle.Font = Enum.Font.GothamBold
+tutTitle.TextSize = 22
+tutTitle.TextColor3 = COL_GOLD
+tutTitle.Text = ""
+tutTitle.ZIndex = 102
+tutTitle.Parent = tutCard
+
+local tutBody = Instance.new("TextLabel")
+tutBody.Size = UDim2.new(1, -64, 0, 170)
+tutBody.Position = UDim2.new(0, 32, 0, 142)
+tutBody.BackgroundTransparency = 1
+tutBody.Font = Enum.Font.Gotham
+tutBody.TextSize = 17
+tutBody.TextColor3 = COL_TEXT
+tutBody.TextWrapped = true
+tutBody.TextYAlignment = Enum.TextYAlignment.Top
+tutBody.Text = ""
+tutBody.ZIndex = 102
+tutBody.Parent = tutCard
+
+-- Fortschritts-Punkte
+local tutDots = Instance.new("Frame")
+tutDots.Size = UDim2.new(0, 200, 0, 12)
+tutDots.Position = UDim2.new(0.5, -100, 1, -78)
+tutDots.BackgroundTransparency = 1
+tutDots.ZIndex = 102
+tutDots.Parent = tutCard
+local tutDotsLayout = Instance.new("UIListLayout")
+tutDotsLayout.FillDirection = Enum.FillDirection.Horizontal
+tutDotsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+tutDotsLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+tutDotsLayout.Padding = UDim.new(0, 8)
+tutDotsLayout.Parent = tutDots
+local tutDotObjs = {}
+for i = 1, #TUTORIAL_STEPS do
+	local d = Instance.new("Frame")
+	d.Size = UDim2.new(0, 10, 0, 10)
+	d.BackgroundColor3 = Color3.fromRGB(90, 100, 120)
+	d.BorderSizePixel = 0
+	d.ZIndex = 102
+	d.LayoutOrder = i
+	d.Parent = tutDots
+	mkCorner(d, 5).CornerRadius = UDim.new(1, 0)
+	tutDotObjs[i] = d
+end
+
+local function mkTutBtn(text, w, x, color)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(0, w, 0, 40)
+	b.Position = UDim2.new(0, x, 1, -56)
+	b.BackgroundColor3 = color
+	b.TextColor3 = Color3.fromRGB(255, 255, 255)
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 16
+	b.Text = text
+	b.ZIndex = 103
+	b.Parent = tutCard
+	mkCorner(b, 10)
+	return b
+end
+
+local tutBackBtn = mkTutBtn("Zurück", 120, 24, Color3.fromRGB(60, 70, 88))
+local tutNextBtn = mkTutBtn("Weiter", 160, 376, Color3.fromRGB(40, 160, 90))
+
+-- "Überspringen"-Kreuz oben rechts
+local tutSkipBtn = Instance.new("TextButton")
+tutSkipBtn.Size = UDim2.new(0, 36, 0, 36)
+tutSkipBtn.Position = UDim2.new(1, -44, 0, 12)
+tutSkipBtn.BackgroundTransparency = 1
+tutSkipBtn.Font = Enum.Font.GothamBold
+tutSkipBtn.TextSize = 24
+tutSkipBtn.TextColor3 = Color3.fromRGB(150, 160, 175)
+tutSkipBtn.Text = "✕"
+tutSkipBtn.ZIndex = 103
+tutSkipBtn.Parent = tutCard
+
+local tutStep = 1
+local tutorialShownThisSession = false
+
+local function renderTutStep()
+	local s = TUTORIAL_STEPS[tutStep]
+	if not s then
+		return
+	end
+	tutEmoji.Text = s.emoji
+	tutTitle.Text = if lang == "de" then s.titleDe else s.titleEn
+	tutBody.Text = if lang == "de" then s.bodyDe else s.bodyEn
+	tutBackBtn.Visible = tutStep > 1
+	local last = tutStep >= #TUTORIAL_STEPS
+	tutNextBtn.Text = if last
+		then (if lang == "de" then "Los geht's! ⚡" else "Let's go! ⚡")
+		else (if lang == "de" then "Weiter" else "Next")
+	tutSkipBtn.Visible = not last
+	for i, d in tutDotObjs do
+		d.BackgroundColor3 = if i == tutStep then COL_GOLD else Color3.fromRGB(90, 100, 120)
+	end
+end
+
+local function hideTutorial()
+	tutorialOverlay.Visible = false
+end
+
+local function finishTutorial()
+	hideTutorial()
+	-- Flag dauerhaft setzen (idempotent serverseitig).
+	pcall(function()
+		TutorialDoneEvent:FireServer()
+	end)
+end
+
+local function showTutorial()
+	tutStep = 1
+	renderTutStep()
+	tutorialOverlay.Visible = true
+	scaleIn(tutCard, 0.8, 0.22)
+end
+
+tutNextBtn.Activated:Connect(function()
+	if tutStep >= #TUTORIAL_STEPS then
+		finishTutorial()
+	else
+		tutStep += 1
+		renderTutStep()
+	end
+end)
+tutBackBtn.Activated:Connect(function()
+	if tutStep > 1 then
+		tutStep -= 1
+		renderTutStep()
+	end
+end)
+tutSkipBtn.Activated:Connect(finishTutorial)
+helpBtn.Activated:Connect(showTutorial)
 
 -- =====================================================================
 -- =========================== TISCH-SCREEN ============================
@@ -925,6 +1154,7 @@ local function showScreen(name)
 	lobbyScreen.Visible = name == "lobby"
 	tableScreen.Visible = name == "table"
 	leaveBtn.Visible = name == "table"
+	helpBtn.Visible = name == "lobby"
 end
 
 local function renderProfile(prof)
@@ -1339,6 +1569,9 @@ langBtn.Activated:Connect(function()
 	else
 		renderLobby()
 	end
+	if tutorialOverlay.Visible then
+		renderTutStep()
+	end
 end)
 
 -- =====================================================================
@@ -1353,6 +1586,11 @@ StateEvent.OnClientEvent:Connect(function(view)
 		showScreen("lobby")
 		renderLobby()
 		showDailyBonus(view.dailyBonus)
+		-- Einsteiger-Tutorial beim allerersten Login automatisch zeigen.
+		if view.tutorialDone == false and not tutorialShownThisSession then
+			tutorialShownThisSession = true
+			showTutorial()
+		end
 	elseif view.screen == "profile" then
 		-- Profil-Update (z. B. nach Match-Ende) — Screen nicht wechseln.
 		renderProfile(view.profile)

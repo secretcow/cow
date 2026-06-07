@@ -455,6 +455,14 @@ do
 	-- Nicht-Tabelle (z. B. nil aus leerem DataStore) -> Default.
 	local n = Profile.sanitize(nil, 9, "Cara")
 	ok(n.wallet == Profile.STARTING_WALLET and n.name == "Cara", "sanitize(nil) -> Default")
+
+	-- Tutorial-Flag: default false, sanitize bewahrt true, markTutorialDone setzt.
+	ok(d.tutorialDone == false, "default: Tutorial noch nicht gesehen")
+	ok(Profile.sanitize({ tutorialDone = true }, 1, "X").tutorialDone == true, "sanitize bewahrt tutorialDone")
+	ok(Profile.sanitize({}, 1, "X").tutorialDone == false, "sanitize: fehlendes tutorialDone -> false")
+	local tp = Profile.default(1, "X")
+	Profile.markTutorialDone(tp)
+	ok(tp.tutorialDone == true, "markTutorialDone setzt das Flag")
 end
 
 print("== Profile: refill + Mutatoren ==")

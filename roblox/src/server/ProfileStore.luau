@@ -67,6 +67,7 @@ function ProfileStore.save(userId)
 				createdAt = p.createdAt,
 				lastDailyDay = p.lastDailyDay,
 				dailyStreak = p.dailyStreak,
+				tutorialDone = p.tutorialDone,
 			}
 		end)
 	end)
@@ -133,6 +134,16 @@ function ProfileStore.recordMatchWin(userId, name)
 	local p = ProfileStore.load(userId, name)
 	Profile.recordMatchWin(p)
 	ProfileStore.save(userId)
+	return p
+end
+
+-- Markiert das Einsteiger-Tutorial als gesehen und persistiert (write-through).
+function ProfileStore.markTutorialDone(userId, name)
+	local p = ProfileStore.load(userId, name)
+	if not p.tutorialDone then
+		Profile.markTutorialDone(p)
+		ProfileStore.save(userId)
+	end
 	return p
 end
 

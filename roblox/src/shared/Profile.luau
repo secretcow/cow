@@ -35,6 +35,7 @@ function Profile.default(userId, name)
 		createdAt = os.time(),
 		lastDailyDay = 0, -- Tagesindex des letzten beanspruchten Bonus
 		dailyStreak = 0, -- aktuelle Login-Serie
+		tutorialDone = false, -- hat der Spieler das Einsteiger-Tutorial gesehen?
 	}
 end
 
@@ -54,6 +55,7 @@ function Profile.sanitize(raw, userId, name)
 		createdAt = toInt(raw.createdAt, os.time()),
 		lastDailyDay = math.max(0, toInt(raw.lastDailyDay, 0)),
 		dailyStreak = math.max(0, toInt(raw.dailyStreak, 0)),
+		tutorialDone = raw.tutorialDone == true,
 	}
 	if name and name ~= "" then
 		p.name = name
@@ -78,6 +80,12 @@ end
 
 function Profile.recordMatchWin(p)
 	p.matchesWon = (p.matchesWon or 0) + 1
+	return p
+end
+
+-- Markiert das Einsteiger-Tutorial als gesehen (wird einmalig pro Spieler gesetzt).
+function Profile.markTutorialDone(p)
+	p.tutorialDone = true
 	return p
 end
 
