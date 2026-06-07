@@ -8,6 +8,7 @@ local HandEval = require("../src/shared/HandEval")
 local PokerEngine = require("../src/shared/PokerEngine")
 local Strings = require("../src/shared/Strings")
 local RoomManager = require("../src/shared/RoomManager")
+local Profile = require("../src/shared/Profile")
 
 local passed = 0
 local failed = 0
@@ -403,6 +404,62 @@ do
 	local c2 = rm:createRoom({ id = "b", name = "B" })
 	ok(c1 ~= c2, `Kollision aufgeloest: {c1} ~= {c2}`)
 	ok(rm:roomCount() == 2, "beide Raeume existieren")
+end
+
+-- ===================== Profile (Wallet + Statistiken) =====================
+print("== Profile: Default + Sanitize ==")
+do
+	local d = Profile.default(123, "Anna")
+	ok(d.userId == "123", "default userId als String")
+	ok(d.name == "Anna", "default name")
+	ok(d.wallet == Profile.STARTING_WALLET, "default wallet = Startguthaben")
+	ok(d.matchesWon == 0 and d.handsWon == 0 and d.biggestPot == 0, "default Statistiken 0")
+
+	-- Sanitize: fehlende/fehlerhafte Felder werden ergaenzt/korrigiert.
+	local s = Profile.sanitize({ wallet = "250", matchesWon = 3, biggestPot = -5 }, 7, "Bob")
+	ok(s.wallet == 250, "sanitize: String-Wallet -> Zahl")
+	ok(s.matchesWon == 3, "sanitize: matchesWon uebernommen")
+	ok(s.handsWon == 0, "sanitize: fehlendes Feld -> 0")
+	ok(s.biggestPot == 0, "sanitize: negatives Feld -> 0 geklemmt")
+	ok(s.name == "Bob", "sanitize: Name-Override")
+
+	-- Nicht-Tabelle (z. B. nil aus leerem DataStore) -> Default.
+	local n = Profile.sanitize(nil, 9, "Cara")
+	ok(n.wallet == Profile.STARTING_WALLET and n.name == "Cara", "sanitize(nil) -> Default")
+end
+
+print("== Profile: refill + Mutatoren ==")
+do
+	local p = Profile.default(1, "X")
+	p.wallet = 0
+	Profile.refillIfBroke(p)
+	ok(p.wallet == Profile.REFILL_TO, "refill: leeres Wallet aufgefuellt")
+
+	p.wallet = 500
+	Profile.refillIfBroke(p)
+	ok(p.wallet == 500, "refill: volles Wallet unveraendert")
+
+	Profile.adjustWallet(p, -200)
+	ok(p.wallet == 300, "adjustWallet: Abbuchung")
+	Profile.adjustWallet(p, -9999)
+	ok(p.wallet == 0, "adjustWallet: Clamp >= 0")
+	Profile.adjustWallet(p, 150)
+	ok(p.wallet == 150, "adjustWallet: Gutschrift")
+
+	Profile.recordMatchWin(p)
+	Profile.recordMatchWin(p)
+	ok(p.matchesWon == 2, "recordMatchWin zaehlt")
+
+	Profile.recordHandWin(p, 400)
+	ok(p.handsWon == 1 and p.biggestPot == 400, "recordHandWin: Hand + biggestPot")
+	Profile.recordHandWin(p, 100)
+	ok(p.biggestPot == 400, "recordHandWin: kleinerer Pot aendert biggestPot nicht")
+	Profile.recordHandWin(p, 900)
+	ok(p.biggestPot == 900, "recordHandWin: groesserer Pot aktualisiert biggestPot")
+
+	local pub = Profile.publicView(p)
+	ok(pub.wallet == 150 and pub.matchesWon == 2 and pub.handsWon == 3, "publicView Felder")
+	ok(pub.userId == nil and pub.createdAt == nil, "publicView ohne interne Felder")
 end
 
 print(string.format("\n%d bestanden, %d fehlgeschlagen", passed, failed))
