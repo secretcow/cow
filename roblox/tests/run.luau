@@ -7,6 +7,7 @@ local Cards = require("../src/shared/Cards")
 local HandEval = require("../src/shared/HandEval")
 local PokerEngine = require("../src/shared/PokerEngine")
 local Strings = require("../src/shared/Strings")
+local RoomManager = require("../src/shared/RoomManager")
 
 local passed = 0
 local failed = 0
@@ -336,6 +337,72 @@ do
 		"EN rebuy"
 	)
 	ok(Strings.translateLog("de", { key = "unbekannt" }) == "unbekannt", "Fallback auf key")
+end
+
+print("== RoomManager ==")
+do
+	local rm = RoomManager.new()
+	local code, room = rm:createRoom({ id = "h1", name = "Host" }, { maxPlayers = 3, startingStack = 2000, flush = true })
+	ok(type(code) == "string" and #code == 4, "createRoom liefert 4-stelligen Code")
+	ok(room.hostId == "h1" and #room.players == 1, "Host sitzt allein im Raum")
+	ok(room.settings.startingStack == 2000 and room.settings.flush == true, "Settings uebernommen")
+	ok(room.settings.maxPlayers == 3, "maxPlayers geklemmt/uebernommen")
+
+	-- Beitritt
+	ok(rm:joinRoom(code, { id = "p2", name = "Bert" }).ok == true, "Spieler 2 tritt bei")
+	ok(rm:joinRoom(code, { id = "p3", name = "Cara" }).ok == true, "Spieler 3 tritt bei")
+	-- Voll
+	ok(rm:joinRoom(code, { id = "p4", name = "Dora" }).error ~= nil, "voller Tisch lehnt ab (max 3)")
+	-- Idempotenter Re-Join
+	local rj = rm:joinRoom(code, { id = "p2", name = "Bert" })
+	ok(rj.ok == true and rj.rejoined == true, "erneuter Beitritt = idempotent (rejoined)")
+	ok(#room.players == 3, "weiterhin 3 Spieler")
+
+	-- Falscher Code
+	ok(rm:joinRoom("ZZZZ", { id = "x", name = "X" }).error ~= nil, "unbekannter Code lehnt ab")
+
+	-- Start mit zu wenigen Spielern
+	local rmSolo = RoomManager.new()
+	local sc = rmSolo:createRoom({ id = "s", name = "Solo" })
+	ok(rmSolo:startMatch(sc).error ~= nil, "Start mit 1 Spieler abgelehnt")
+
+	-- Match starten baut Engine-Tisch
+	local started = rm:startMatch(code)
+	ok(started.ok == true and started.table ~= nil, "startMatch baut Engine-Tisch")
+	ok(started.table.flush == true and started.table.startingStack == 2000, "Tisch erbt Settings")
+	ok(room.started == true, "room.started = true")
+	-- Beitritt nach Start abgelehnt
+	ok(rm:joinRoom(code, { id = "late", name = "Spaet" }).error ~= nil, "Beitritt nach Start abgelehnt")
+
+	-- Host verlaesst -> Host-Reassignment
+	local lv = rm:leaveRoom(code, "h1")
+	ok(lv.ok == true and lv.destroyed == false, "Host verlaesst, Raum bleibt")
+	ok(room.hostId == "p2", "Host neu vergeben an naechsten Spieler")
+
+	-- Alle verlassen -> Raum zerstoert
+	rm:leaveRoom(code, "p2")
+	local last = rm:leaveRoom(code, "p3")
+	ok(last.destroyed == true, "letzter Spieler verlaesst -> Raum zerstoert")
+	ok(rm:getRoom(code) == nil, "Raum entfernt")
+	ok(rm:roomCount() == 0, "keine Raeume mehr")
+end
+
+print("== RoomManager: Code-Kollision wird aufgeloest ==")
+do
+	-- Deterministische RNG: erzeugt zunaechst denselben Code wie der erste Raum,
+	-- danach einen anderen. Erwartung: der zweite Raum bekommt einen frischen Code.
+	-- Raum1: AAAA. Raum2 Versuch1: AAAA (Kollision!) -> Versuch2: AAAB.
+	local seq = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2 }
+	local i = 0
+	local rng = function(_lo, _hi)
+		i += 1
+		return seq[i] or 1
+	end
+	local rm = RoomManager.new({ rng = rng })
+	local c1 = rm:createRoom({ id = "a", name = "A" })
+	local c2 = rm:createRoom({ id = "b", name = "B" })
+	ok(c1 ~= c2, `Kollision aufgeloest: {c1} ~= {c2}`)
+	ok(rm:roomCount() == 2, "beide Raeume existieren")
 end
 
 print(string.format("\n%d bestanden, %d fehlgeschlagen", passed, failed))

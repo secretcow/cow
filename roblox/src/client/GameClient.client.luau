@@ -9,6 +9,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Cards = require(Shared:WaitForChild("Cards"))
@@ -217,6 +218,176 @@ startBtn.BackgroundColor3 = Color3.fromRGB(40, 160, 90)
 foldBtn.BackgroundColor3 = Color3.fromRGB(170, 60, 60)
 rebuyBtn.BackgroundColor3 = Color3.fromRGB(120, 90, 200)
 
+-- ---- Raise-Panel mit ziehbarem Slider ----
+local raiseState = { open = false, min = 0, max = 0, val = 0 }
+
+local raisePanel = Instance.new("Frame")
+raisePanel.Size = UDim2.new(0, 560, 0, 120)
+raisePanel.Position = UDim2.new(1, -570, 1, -190)
+raisePanel.BackgroundColor3 = COL_DARK
+raisePanel.BorderSizePixel = 0
+raisePanel.Visible = false
+raisePanel.Parent = root
+local rpCorner = Instance.new("UICorner")
+rpCorner.CornerRadius = UDim.new(0, 10)
+rpCorner.Parent = raisePanel
+
+local raiseValLabel = Instance.new("TextLabel")
+raiseValLabel.Size = UDim2.new(1, -20, 0, 26)
+raiseValLabel.Position = UDim2.new(0, 10, 0, 8)
+raiseValLabel.BackgroundTransparency = 1
+raiseValLabel.Font = Enum.Font.GothamBold
+raiseValLabel.TextSize = 18
+raiseValLabel.TextColor3 = COL_GOLD
+raiseValLabel.TextXAlignment = Enum.TextXAlignment.Left
+raiseValLabel.Text = "Erhöhen auf 0"
+raiseValLabel.Parent = raisePanel
+
+-- Slider-Track + Fill + Knopf
+local track = Instance.new("Frame")
+track.Size = UDim2.new(1, -20, 0, 8)
+track.Position = UDim2.new(0, 10, 0, 44)
+track.BackgroundColor3 = Color3.fromRGB(60, 68, 82)
+track.BorderSizePixel = 0
+track.Parent = raisePanel
+local trackCorner = Instance.new("UICorner")
+trackCorner.CornerRadius = UDim.new(1, 0)
+trackCorner.Parent = track
+
+local fill = Instance.new("Frame")
+fill.Size = UDim2.new(0, 0, 1, 0)
+fill.BackgroundColor3 = COL_ACCENT
+fill.BorderSizePixel = 0
+fill.Parent = track
+local fillCorner = Instance.new("UICorner")
+fillCorner.CornerRadius = UDim.new(1, 0)
+fillCorner.Parent = fill
+
+local knob = Instance.new("TextButton")
+knob.Size = UDim2.new(0, 22, 0, 22)
+knob.AnchorPoint = Vector2.new(0.5, 0.5)
+knob.Position = UDim2.new(0, 0, 0.5, 0)
+knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+knob.Text = ""
+knob.AutoButtonColor = false
+knob.Parent = track
+local knobCorner = Instance.new("UICorner")
+knobCorner.CornerRadius = UDim.new(1, 0)
+knobCorner.Parent = knob
+
+local function refreshSlider()
+	local span = math.max(1, raiseState.max - raiseState.min)
+	local frac = math.clamp((raiseState.val - raiseState.min) / span, 0, 1)
+	fill.Size = UDim2.new(frac, 0, 1, 0)
+	knob.Position = UDim2.new(frac, 0, 0.5, 0)
+	raiseValLabel.Text = (if lang == "de" then "Erhöhen auf " else "Raise to ") .. tostring(raiseState.val)
+		.. (if raiseState.val >= raiseState.max then " (All-In)" else "")
+end
+
+local function setRaiseVal(v)
+	v = math.floor(v)
+	v = math.clamp(v, raiseState.min, raiseState.max)
+	raiseState.val = v
+	refreshSlider()
+end
+
+-- Quick-Buttons im Panel
+local quickRow = Instance.new("Frame")
+quickRow.Size = UDim2.new(1, -20, 0, 36)
+quickRow.Position = UDim2.new(0, 10, 0, 60)
+quickRow.BackgroundTransparency = 1
+quickRow.Parent = raisePanel
+local quickLayout = Instance.new("UIListLayout")
+quickLayout.FillDirection = Enum.FillDirection.Horizontal
+quickLayout.Padding = UDim.new(0, 6)
+quickLayout.Parent = quickRow
+
+local function mkQuick(text)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(0, 90, 0, 32)
+	b.BackgroundColor3 = Color3.fromRGB(50, 58, 72)
+	b.TextColor3 = COL_TEXT
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 13
+	b.Text = text
+	b.Parent = quickRow
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, 6)
+	c.Parent = b
+	return b
+end
+
+local minQuick = mkQuick("Min")
+local potQuick = mkQuick("Pot")
+local maxQuick = mkQuick("All-In")
+local backQuick = mkQuick("Zurück")
+local confirmQuick = mkQuick("Erhöhen")
+confirmQuick.BackgroundColor3 = COL_ACCENT
+backQuick.BackgroundColor3 = Color3.fromRGB(90, 90, 100)
+
+-- Slider-Drag
+local dragging = false
+local function updateFromX(mouseX)
+	local rel = (mouseX - track.AbsolutePosition.X) / math.max(1, track.AbsoluteSize.X)
+	rel = math.clamp(rel, 0, 1)
+	setRaiseVal(raiseState.min + rel * (raiseState.max - raiseState.min))
+end
+knob.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+	end
+end)
+track.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		updateFromX(input.Position.X)
+	end
+end)
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		updateFromX(input.Position.X)
+	end
+end)
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+
+local function openRaisePanel()
+	local a = lastView and lastView.actions
+	if not (a and a.canRaise) then
+		return
+	end
+	raiseState.open = true
+	raiseState.min = a.minRaiseTo
+	raiseState.max = a.maxRaiseTo
+	setRaiseVal(a.minRaiseTo)
+	raisePanel.Visible = true
+end
+local function closeRaisePanel()
+	raiseState.open = false
+	raisePanel.Visible = false
+end
+
+minQuick.Activated:Connect(function()
+	setRaiseVal(raiseState.min)
+end)
+potQuick.Activated:Connect(function()
+	local potVal = (lastView and lastView.pot) or raiseState.min
+	setRaiseVal(potVal)
+end)
+maxQuick.Activated:Connect(function()
+	setRaiseVal(raiseState.max)
+end)
+backQuick.Activated:Connect(function()
+	closeRaisePanel()
+end)
+confirmQuick.Activated:Connect(function()
+	ActionEvent:FireServer("raise", raiseState.val)
+	closeRaisePanel()
+end)
+
 -- ---- Karten-Widgets ----
 local function mkCard(parent, card, hidden: boolean)
 	local f = Instance.new("Frame")
@@ -401,6 +572,7 @@ local function render(view)
 
 	-- Aktionen
 	local a = view.actions
+	startBtn.Text = if lang == "de" then "Hand starten" else "Start hand"
 	startBtn.Visible = view.betweenHands == true and not view.matchOver
 	foldBtn.Visible = a ~= nil
 	checkCallBtn.Visible = a ~= nil
@@ -412,6 +584,20 @@ local function render(view)
 	rebuyBtn.Visible = view.cash == true
 		and view.betweenHands == true
 		and (view.myStack or 0) < (view.buyIn or 0)
+
+	-- Raise-Panel schliessen, sobald ich nicht mehr (sinnvoll) erhoehen kann.
+	if raiseState.open and not (a and a.canRaise) then
+		closeRaisePanel()
+	end
+	-- Sprachabhaengige Labels im Panel
+	minQuick.Text = "Min"
+	potQuick.Text = "Pot"
+	maxQuick.Text = "All-In"
+	backQuick.Text = if lang == "de" then "Zurück" else "Back"
+	confirmQuick.Text = if lang == "de" then "Erhöhen" else "Raise"
+	if raiseState.open then
+		refreshSlider()
+	end
 end
 
 -- ---- Aktionen verdrahten ----
@@ -431,9 +617,10 @@ checkCallBtn.Activated:Connect(function()
 	end
 end)
 raiseBtn.Activated:Connect(function()
-	if lastView and lastView.actions and lastView.actions.canRaise then
-		-- Einfacher Startwert: Min-Raise. (Slider/Pot/All-In folgen mit der Vollausbau-UI.)
-		ActionEvent:FireServer("raise", lastView.actions.minRaiseTo)
+	if raiseState.open then
+		closeRaisePanel()
+	else
+		openRaisePanel()
 	end
 end)
 rebuyBtn.Activated:Connect(function()
