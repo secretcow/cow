@@ -9,6 +9,7 @@ local PokerEngine = require("../src/shared/PokerEngine")
 local Strings = require("../src/shared/Strings")
 local RoomManager = require("../src/shared/RoomManager")
 local Profile = require("../src/shared/Profile")
+local Bot = require("../src/shared/Bot")
 
 local passed = 0
 local failed = 0
@@ -527,6 +528,104 @@ do
 	-- sanitize bewahrt die Bonus-Felder.
 	local s = Profile.sanitize({ lastDailyDay = 42, dailyStreak = 3 }, 5, "Z")
 	ok(s.lastDailyDay == 42 and s.dailyStreak == 3, "sanitize bewahrt Bonus-Felder")
+end
+
+-- ===================== Bot (KI-Gegner) =====================
+print("== Bot: Entscheidungslogik ==")
+do
+	-- Nicht am Zug -> keine Entscheidung.
+	ok(Bot.decide({ yourTurn = false }) == nil, "kein Zug -> nil")
+	ok(Bot.decide({ yourTurn = true, actions = nil }) == nil, "keine Aktionen -> nil")
+
+	-- Schwache Hand (hohe Karte) gegen grossen Einsatz -> Fold.
+	local rngHi = function()
+		return 0.99
+	end
+	local weakFacingBet = {
+		yourTurn = true,
+		totalPot = 100,
+		currentBet = 200,
+		community = { { rank = 1, suit = 0 }, { rank = 3, suit = 1 }, { rank = 5, suit = 2 } },
+		meIdx = 1,
+		players = { { hole = { { rank = 2, suit = 0 }, { rank = 4, suit = 1 } } } },
+		myHand = { cat = 2 },
+		actions = { canCheck = false, canCall = true, toCall = 200, canRaise = true, minRaiseTo = 400, maxRaiseTo = 1000 },
+	}
+	ok(Bot.decide(weakFacingBet, rngHi).type == "fold", "schwache Hand gegen grossen Einsatz -> Fold")
+
+	-- Starke Hand (Full House) gegen Einsatz -> Raise mit gueltigem Betrag.
+	local strongFacingBet = {
+		yourTurn = true,
+		totalPot = 300,
+		currentBet = 100,
+		community = { { rank = 9, suit = 0 }, { rank = 9, suit = 1 }, { rank = 5, suit = 2 } },
+		meIdx = 1,
+		players = { { hole = { { rank = 9, suit = 3 }, { rank = 5, suit = 0 } } } },
+		myHand = { cat = 7 },
+		actions = { canCheck = false, canCall = true, toCall = 100, canRaise = true, minRaiseTo = 200, maxRaiseTo = 1000 },
+	}
+	local d = Bot.decide(strongFacingBet, rngHi)
+	ok(d.type == "raise", "starke Hand -> Raise")
+	ok(d.amount >= 200 and d.amount <= 1000, "Raise-Betrag liegt im erlaubten Bereich")
+
+	-- Kein Einsatz, mittlere Hand, kein Bluff-Wurf -> Check.
+	local noBet = {
+		yourTurn = true,
+		totalPot = 40,
+		currentBet = 0,
+		community = { { rank = 6, suit = 0 }, { rank = 2, suit = 1 }, { rank = 8, suit = 2 } },
+		meIdx = 1,
+		players = { { hole = { { rank = 6, suit = 3 }, { rank = 3, suit = 0 } } } },
+		myHand = { cat = 3 },
+		actions = { canCheck = true, canCall = false, toCall = 0, canRaise = true, minRaiseTo = 20, maxRaiseTo = 980 },
+	}
+	ok(Bot.decide(noBet, rngHi).type == "check", "kein Einsatz, mittlere Hand -> Check")
+end
+
+print("== Bot: treibt eine ganze Partie (Engine-Integration) ==")
+do
+	-- Drei Bots spielen eine komplette Partie nur via Bot.decide. Verifiziert, dass
+	-- die Entscheidungen von der Engine stets akzeptiert werden, die Partie endet
+	-- und Chips erhalten bleiben.
+	math.randomseed(12345)
+	local defs = { { id = "b1", name = "A" }, { id = "b2", name = "B" }, { id = "b3", name = "C" } }
+	local t = PokerEngine.Table.new(defs, { startingStack = 1000 })
+	t:startHand()
+	local guard = 0
+	local allValid = true
+	local alwaysDecides = true
+	while not t.matchOver and guard < 8000 do
+		guard += 1
+		if t.toAct ~= nil and t.stage ~= "handover" and t.stage ~= "showdown" then
+			local pid = t.players[t.toAct].id
+			local decision = Bot.decide(t:view(pid))
+			if decision == nil then
+				alwaysDecides = false
+				break
+			end
+			local res = t:act(pid, decision.type, decision.amount)
+			if res and res.error then
+				allValid = false
+				break
+			end
+		elseif t.stage == "handover" then
+			if t.matchOver then
+				break
+			end
+			t:startHand()
+		else
+			break
+		end
+	end
+	ok(alwaysDecides, "Bot liefert immer eine Entscheidung, wenn am Zug")
+	ok(allValid, "alle Bot-Aktionen sind fuer die Engine gueltig")
+	ok(t.matchOver, "Partie unter Bots terminiert")
+	ok(guard < 8000, "Partie endet ohne Endlosschleife")
+	local total = 0
+	for _, p in t.players do
+		total += p.stack
+	end
+	ok(total == 3000, "Chips bleiben erhalten (3x1000)")
 end
 
 print(string.format("\n%d bestanden, %d fehlgeschlagen", passed, failed))

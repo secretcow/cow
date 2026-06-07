@@ -23,6 +23,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local RoomManager = require(Shared:WaitForChild("RoomManager"))
 local Profile = require(Shared:WaitForChild("Profile"))
+local Bot = require(Shared:WaitForChild("Bot"))
 -- ProfileStore liegt neben diesem Script (ServerScriptService.Server.ProfileStore).
 local ProfileStore = require(script.Parent:WaitForChild("ProfileStore"))
 
@@ -35,6 +36,11 @@ local CHAT_HISTORY = 40 -- gespeicherte Chat-Nachrichten pro Raum
 local AUTO_START_DELAY = 4 -- Sek. Countdown bis Spielstart (laesst weitere Spieler rein)
 local HAND_DELAY = 3 -- Sek. Pause bis zur naechsten Hand
 local MATCH_END_DELAY = 6 -- Sek. nach Match-Ende bis Tisch wieder oeffnet
+-- KI-Gegner (Bots) fuer oeffentliche Tische: fuellen leere Sitze, weichen Menschen.
+local BOT_PREFIX = "🤖 " -- macht Bots im UI klar erkennbar
+local BOT_FILL_TO = 3 -- Ziel-Spielerzahl am Auto-Tisch (1 Mensch -> 2 Bots)
+local BOT_THINK_MIN = 0.8 -- Sek.: kurze "Denkpause" der Bots (untere Grenze)
+local BOT_THINK_MAX = 1.9 -- Sek.: obere Grenze
 
 -- ---- Remotes anlegen ----
 local Remotes = Instance.new("Folder")
@@ -209,6 +215,13 @@ end
 -- Vorwaerts-Deklaration: wird weiter unten definiert, aber schon vom Run-out
 -- und von scheduleAutoAct referenziert (laeuft erst zur Laufzeit -> Upvalue gesetzt).
 local autoPilotPublic
+-- Ebenfalls vorwaerts: treibt Bot-Zuege; von scheduleAutoAct referenziert.
+local scheduleBotAct
+
+-- Ist die Id ein Bot? (frueh definiert, da bereits recordResults dies braucht.)
+local function isBot(room, pid)
+	return room.bots ~= nil and room.bots[pid] == true
+end
 
 -- ---- Statistiken verbuchen (idempotent pro Hand/Match) ----
 local function recordResults(room)
@@ -221,14 +234,14 @@ local function recordResults(room)
 		local pot = t.result.pot or 0
 		for _, seatIdx in t.result.winners do
 			local p = t.players[seatIdx]
-			if p then
+			if p and not isBot(room, p.id) then
 				ProfileStore.recordHandWin(p.id, p.name, pot)
 			end
 		end
 	end
 	if t.matchOver and not room.matchRecorded then
 		room.matchRecorded = true
-		if t.matchWinnerId then
+		if t.matchWinnerId and not isBot(room, t.matchWinnerId) then
 			local winnerName
 			for _, p in t.players do
 				if p.id == t.matchWinnerId then
@@ -316,9 +329,165 @@ local function scheduleAutoAct(room, immediate)
 			recordResults(room)
 			broadcastRoom(room)
 			maybeDriveRunout(room)
+			scheduleBotAct(room)
 			autoPilotPublic(room)
 		end
 		scheduleAutoAct(room) -- naechster getrennter Spieler?
+	end)
+end
+
+-- ---- KI-Gegner (Bots) ----
+-- Bots sind keine echten Player-Objekte: sie sitzen im Raum (room.players) und
+-- gelten als "verbunden" (room.connected[id]=true), damit sie weder vom
+-- Auto-Fold getroffen werden noch beim connectedCount fehlen. Eine eigene
+-- Markierung room.bots[id] unterscheidet sie. Persistenz/Statistiken werden fuer
+-- Bots uebersprungen, und broadcastRoom ignoriert sie automatisch (kein Player).
+local botSeq = 0
+
+-- Anzahl tatsaechlich anwesender Menschen (verbunden, kein Bot).
+local function humanCount(room)
+	local n = 0
+	for _, p in room.players do
+		if room.connected[p.id] and not isBot(room, p.id) then
+			n += 1
+		end
+	end
+	return n
+end
+
+local function botCount(room)
+	local n = 0
+	if room.bots then
+		for _ in room.bots do
+			n += 1
+		end
+	end
+	return n
+end
+
+-- Sucht einen freien, nicht vergebenen Bot-Namen fuer den Raum.
+local function pickBotName(room)
+	local used = {}
+	for _, p in room.players do
+		used[p.name] = true
+	end
+	local pool = {}
+	for _, nm in Bot.NAMES do
+		local full = BOT_PREFIX .. nm
+		if not used[full] then
+			table.insert(pool, full)
+		end
+	end
+	if #pool == 0 then
+		return BOT_PREFIX .. "Bot " .. tostring(botSeq)
+	end
+	return pool[math.random(1, #pool)]
+end
+
+local function addBot(room)
+	if room.started or #room.players >= room.settings.maxPlayers then
+		return nil
+	end
+	botSeq += 1
+	local bid = "bot_" .. tostring(botSeq)
+	local res = rm:joinRoom(room.code, { id = bid, name = pickBotName(room) })
+	if res.error then
+		return nil
+	end
+	room.bots = room.bots or {}
+	room.bots[bid] = true
+	room.connected[bid] = true
+	return bid
+end
+
+local function removeBot(room, bid)
+	rm:leaveRoom(room.code, bid)
+	if room.bots then
+		room.bots[bid] = nil
+	end
+	room.connected[bid] = nil
+end
+
+-- Balanciert die Bot-Zahl an einem oeffentlichen Wartetisch: fuellt auf das Ziel
+-- auf (so dass ein einzelner Mensch sofort Gegner hat) und entfernt ueberzaehlige
+-- Bots, sobald genug Menschen da sind (Menschen haben Vorrang). Entfernt alle Bots,
+-- wenn kein Mensch mehr da ist (der Tisch wird dann ueber die TTL aufgeraeumt).
+local function ensureBots(room)
+	if not room.public or room.started then
+		return
+	end
+	local humans = humanCount(room)
+	if humans == 0 then
+		if room.bots then
+			for bid in table.clone(room.bots) do
+				removeBot(room, bid)
+			end
+		end
+		return
+	end
+	local desired = math.clamp(math.max(humans, BOT_FILL_TO), 2, room.settings.maxPlayers)
+	-- Ueberzaehlige Bots entfernen (Menschen Vorrang).
+	while #room.players > desired and botCount(room) > 0 do
+		local victim
+		for bid in room.bots do
+			victim = bid
+			break
+		end
+		if not victim then
+			break
+		end
+		removeBot(room, victim)
+	end
+	-- Fehlende Sitze mit Bots auffuellen.
+	while #room.players < desired do
+		if not addBot(room) then
+			break
+		end
+	end
+end
+
+-- Treibt den Zug eines Bots: ist der aktuell Aktive ein Bot, faellt nach kurzer
+-- "Denkpause" eine Entscheidung (Bot.decide) und wird in der Engine ausgefuehrt.
+-- Ein Generationen-Token (botActGen) verwirft veraltete Timer.
+function scheduleBotAct(room)
+	local t = room.table
+	if not t or t.toAct == nil or t.stage == "handover" or t.stage == "showdown" then
+		return
+	end
+	local p = t.players[t.toAct]
+	if not p or not isBot(room, p.id) then
+		return
+	end
+	room.botActGen = (room.botActGen or 0) + 1
+	local gen = room.botActGen
+	local think = BOT_THINK_MIN + math.random() * (BOT_THINK_MAX - BOT_THINK_MIN)
+	task.delay(think, function()
+		if room.botActGen ~= gen or not (rm:getRoom(room.code) and room.table) then
+			return
+		end
+		local tt = room.table
+		if tt.toAct == nil then
+			return
+		end
+		local cur = tt.players[tt.toAct]
+		if not cur or not isBot(room, cur.id) then
+			return
+		end
+		local view = tt:view(cur.id)
+		local decision = Bot.decide(view)
+		if decision then
+			tt:act(cur.id, decision.type, decision.amount)
+		else
+			-- Sicherheitsnetz: passender Fallback.
+			local a = view.actions
+			tt:act(cur.id, if a and a.canCheck then "check" else "fold")
+		end
+		recordResults(room)
+		broadcastRoom(room)
+		maybeDriveRunout(room)
+		scheduleAutoAct(room)
+		scheduleBotAct(room) -- der naechste Aktive koennte ebenfalls ein Bot sein
+		autoPilotPublic(room)
 	end)
 end
 
@@ -334,8 +503,9 @@ function autoPilotPublic(room)
 	end
 	local t = room.table
 
-	-- (1) Kein laufendes Match: bei genug Spielern Start einplanen.
+	-- (1) Kein laufendes Match: Bots auffuellen, dann bei genug Spielern Start einplanen.
 	if not room.started then
+		ensureBots(room)
 		if connectedCount(room) >= 2 then
 			room.autoGen = (room.autoGen or 0) + 1
 			local gen = room.autoGen
@@ -356,6 +526,7 @@ function autoPilotPublic(room)
 				broadcastRoom(room)
 				maybeDriveRunout(room)
 				scheduleAutoAct(room)
+				scheduleBotAct(room)
 				autoPilotPublic(room)
 			end)
 		end
@@ -392,6 +563,7 @@ function autoPilotPublic(room)
 			rm:reopen(room.code)
 			room.matchRecorded = false
 			room.lastHandRecorded = nil
+			ensureBots(room) -- Bots fuer das naechste Match neu ausbalancieren
 			broadcastRoom(room)
 			autoPilotPublic(room)
 		end)
@@ -415,6 +587,7 @@ function autoPilotPublic(room)
 			broadcastRoom(room)
 			maybeDriveRunout(room)
 			scheduleAutoAct(room)
+			scheduleBotAct(room)
 			autoPilotPublic(room)
 		end)
 	end
@@ -458,6 +631,7 @@ local function initRoomRuntime(room)
 	room._inited = true
 	room.connected = {}
 	room.chat = {}
+	room.bots = {} -- [botId] = true (KI-Gegner an oeffentlichen Tischen)
 	room.matchRecorded = false
 	room.lastHandRecorded = nil
 end
@@ -520,8 +694,30 @@ QuickPlayFn.OnServerInvoke = function(player)
 		return { error = "Du bist bereits an einem Tisch." }
 	end
 	ProfileStore.load(id, player.Name)
-	local code = rm:findJoinablePublic()
+	-- Bevorzugt einen oeffentlichen Wartetisch mit den MEISTEN Menschen, damit
+	-- echte Spieler zusammengefuehrt werden (statt sich auf Bot-Tische zu verteilen).
+	-- Ein Bot-Sitz gilt dabei als frei: ist nur wegen Bots "voll", weicht ein Bot.
+	local code = nil
+	do
+		local bestHumans = -1
+		for c, room in rm.rooms do
+			if room.public and not room.started then
+				local h = humanCount(room)
+				if h < room.settings.maxPlayers and h > bestHumans then
+					code, bestHumans = c, h
+				end
+			end
+		end
+	end
 	if code then
+		local room = rm:getRoom(code)
+		-- Platz schaffen: falls nur wegen Bots voll, einen Bot rauswerfen.
+		if #room.players >= room.settings.maxPlayers and botCount(room) > 0 then
+			for bid in room.bots do
+				removeBot(room, bid)
+				break
+			end
+		end
 		local res = rm:joinRoom(code, { id = id, name = player.Name })
 		if res.error then
 			code = nil -- Rennen verloren (gerade voll/gestartet) -> neuen Tisch
@@ -544,6 +740,7 @@ QuickPlayFn.OnServerInvoke = function(player)
 	room.connected[id] = true
 	playerRoom[id] = code
 	cancelCleanup(room)
+	ensureBots(room) -- leere Sitze sofort mit Bots fuellen
 	broadcastRoom(room)
 	autoPilotPublic(room)
 	return { ok = true, code = code }
@@ -575,6 +772,16 @@ LeaveRoomEvent.OnServerEvent:Connect(function(player)
 			return
 		end
 		room.connected[id] = nil
+	end
+	-- Oeffentlicher Tisch ohne Menschen -> aufloesen (Bots nicht allein weiterspielen lassen).
+	if rm:getRoom(code) and room.public and humanCount(room) == 0 then
+		destroyRoom(room)
+		sendLobby(player)
+		return
+	end
+	-- Oeffentliche Wartephase: Bots an die neue Spielerzahl anpassen.
+	if rm:getRoom(code) and room.public and not room.started then
+		ensureBots(room)
 	end
 	broadcastRoom(room)
 	sendLobby(player)
@@ -613,6 +820,7 @@ StartHandEvent.OnServerEvent:Connect(function(player)
 	broadcastRoom(room)
 	maybeDriveRunout(room)
 	scheduleAutoAct(room)
+	scheduleBotAct(room)
 end)
 
 ActionEvent.OnServerEvent:Connect(function(player, atype, amount)
@@ -627,6 +835,7 @@ ActionEvent.OnServerEvent:Connect(function(player, atype, amount)
 	broadcastRoom(room)
 	maybeDriveRunout(room)
 	scheduleAutoAct(room)
+	scheduleBotAct(room)
 	autoPilotPublic(room)
 end)
 
@@ -703,10 +912,18 @@ Players.PlayerRemoving:Connect(function(player)
 		playerRoom[id] = nil
 		if r.destroyed then
 			ProfileStore.release(id)
-		else
-			room.connected[id] = nil
-			broadcastRoom(room)
+			return
 		end
+		room.connected[id] = nil
+		broadcastRoom(room)
+	end
+	-- Oeffentlicher Tisch ohne verbleibende Menschen -> aufloesen.
+	if rm:getRoom(code) and room.public and humanCount(room) == 0 then
+		destroyRoom(room)
+		return
+	end
+	if rm:getRoom(code) and room.public and not room.started then
+		ensureBots(room)
 	end
 end)
 
