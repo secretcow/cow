@@ -24,6 +24,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local RoomManager = require(Shared:WaitForChild("RoomManager"))
 local Profile = require(Shared:WaitForChild("Profile"))
 local Bot = require(Shared:WaitForChild("Bot"))
+local Progression = require(Shared:WaitForChild("Progression"))
 -- ProfileStore liegt neben diesem Script (ServerScriptService.Server.ProfileStore).
 local ProfileStore = require(script.Parent:WaitForChild("ProfileStore"))
 
@@ -69,6 +70,7 @@ local ActionEvent = mkEvent("Action")
 local RebuyEvent = mkEvent("Rebuy")
 local ChatEvent = mkEvent("Chat")
 local TutorialDoneEvent = mkEvent("TutorialDone")
+local EquipEvent = mkEvent("Equip")
 local StateEvent = mkEvent("State")
 
 -- ---- Zustand ----
@@ -153,9 +155,23 @@ local function tableView(room, id)
 	v.youAreHost = room.hostId == id
 	v.auto = room.public == true -- oeffentlicher Auto-Pilot-Tisch (kein manueller Start)
 	v.canStart = (not room.table) and connectedCount(room) >= 2
-	-- Verbindungsstatus je Sitz fuer die UI nachreichen.
+	-- Tisch-Thema (Filz-Farbe) richtet sich nach der Vorliebe des Betrachters.
+	do
+		local me = ProfileStore.get(id)
+		local themeId = (me and me.tableTheme) or "default"
+		v.tableThemeColor = Progression.colorOf("tableTheme", themeId)
+	end
+	-- Verbindungsstatus + Kosmetik (Rahmen-/Rueckseiten-Farbe) je Sitz nachreichen.
 	for _, pv in v.players do
 		pv.connected = room.connected[pv.id] == true
+		local prof = ProfileStore.get(pv.id)
+		local frameId = (prof and prof.avatarFrame) or "default"
+		local backId = (prof and prof.cardBack) or "default"
+		-- Rahmen nur senden, wenn nicht "Keiner" (default) — sonst kein Ring.
+		if frameId ~= "default" then
+			pv.frameColor = Progression.colorOf("avatarFrame", frameId)
+		end
+		pv.backColor = Progression.colorOf("cardBack", backId)
 	end
 	return v
 end
@@ -238,6 +254,8 @@ local function recordResults(room)
 			local p = t.players[seatIdx]
 			if p and not isBot(room, p.id) then
 				ProfileStore.recordHandWin(p.id, p.name, pot)
+				-- XP fuer den Hand-Gewinn (nur Cache; persistiert beim Match-Ende).
+				ProfileStore.addXp(p.id, Progression.XP_HAND_WIN, false, p.name)
 			end
 		end
 	end
@@ -251,6 +269,8 @@ local function recordResults(room)
 				end
 			end
 			ProfileStore.recordMatchWin(t.matchWinnerId, winnerName)
+			-- XP fuer den Match-Gewinn (write-through, da hier ohnehin gesichert wird).
+			ProfileStore.addXp(t.matchWinnerId, Progression.XP_MATCH_WIN, true, winnerName)
 		end
 		pushProfiles(room)
 	end
@@ -878,6 +898,32 @@ end)
 TutorialDoneEvent.OnServerEvent:Connect(function(player)
 	local id = idOf(player)
 	ProfileStore.markTutorialDone(id, player.Name)
+end)
+
+-- Kosmetik anlegen (Kartenrueckseite/Tisch-Thema/Avatar-Rahmen). Serverseitig
+-- streng gegen das freigeschaltete Level geprueft — kein Schummeln moeglich.
+EquipEvent.OnServerEvent:Connect(function(player, category, id)
+	if type(category) ~= "string" or type(id) ~= "string" then
+		return
+	end
+	if not Progression.catalog(category) then
+		return -- unbekannte Kategorie
+	end
+	local pid = idOf(player)
+	local prof = ProfileStore.get(pid) or ProfileStore.load(pid, player.Name)
+	local level = Progression.levelFromXp(prof.xp)
+	if not Progression.isUnlocked(level, category, id) then
+		return -- noch nicht freigeschaltet (oder unbekannte id)
+	end
+	ProfileStore.setCosmetic(pid, category, id, player.Name)
+	-- Aktualisiertes Profil zurueckmelden (Client uebernimmt die Auswahl sofort).
+	StateEvent:FireClient(player, { screen = "profile", profile = Profile.publicView(prof) })
+	-- Falls am Tisch: neue Kosmetik allen Sitznachbarn zeigen.
+	local code = playerRoom[pid]
+	local room = code and rm:getRoom(code)
+	if room then
+		broadcastRoom(room)
+	end
 end)
 
 -- ===================== Spieler-Ereignisse =====================

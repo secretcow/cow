@@ -68,6 +68,10 @@ function ProfileStore.save(userId)
 				lastDailyDay = p.lastDailyDay,
 				dailyStreak = p.dailyStreak,
 				tutorialDone = p.tutorialDone,
+					xp = p.xp,
+					cardBack = p.cardBack,
+					tableTheme = p.tableTheme,
+					avatarFrame = p.avatarFrame,
 			}
 		end)
 	end)
@@ -144,6 +148,26 @@ function ProfileStore.markTutorialDone(userId, name)
 		Profile.markTutorialDone(p)
 		ProfileStore.save(userId)
 	end
+	return p
+end
+
+-- Vergibt XP. `persist` steuert das Schreiben in den DataStore: bei haeufigen
+-- Hand-Gewinnen false (nur Cache), beim Match-Gewinn true (write-through).
+function ProfileStore.addXp(userId, amount, persist, name)
+	local p = ProfileStore.load(userId, name)
+	Profile.addXp(p, amount)
+	if persist then
+		ProfileStore.save(userId)
+	end
+	return p
+end
+
+-- Setzt ein ausgewaehltes Kosmetik-Item und persistiert (write-through).
+-- Die Freischalt-Pruefung (per Level) erfolgt im Aufrufer (GameServer).
+function ProfileStore.setCosmetic(userId, category, id, name)
+	local p = ProfileStore.load(userId, name)
+	Profile.setCosmetic(p, category, id)
+	ProfileStore.save(userId)
 	return p
 end
 

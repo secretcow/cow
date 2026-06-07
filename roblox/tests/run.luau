@@ -10,6 +10,7 @@ local Strings = require("../src/shared/Strings")
 local RoomManager = require("../src/shared/RoomManager")
 local Profile = require("../src/shared/Profile")
 local Bot = require("../src/shared/Bot")
+local Progression = require("../src/shared/Progression")
 
 local passed = 0
 local failed = 0
@@ -463,6 +464,84 @@ do
 	local tp = Profile.default(1, "X")
 	Profile.markTutorialDone(tp)
 	ok(tp.tutorialDone == true, "markTutorialDone setzt das Flag")
+
+	-- Progressions-/Kosmetik-Felder: Defaults, Sanitize, Mutatoren, publicView.
+	ok(d.xp == 0, "default: xp 0")
+	ok(d.cardBack == "default" and d.tableTheme == "default" and d.avatarFrame == "default", "default: Kosmetik = default")
+	local sc = Profile.sanitize({ xp = "150", cardBack = "crimson", tableTheme = 5, avatarFrame = "gold" }, 1, "X")
+	ok(sc.xp == 150, "sanitize: String-XP -> Zahl")
+	ok(sc.cardBack == "crimson", "sanitize: cardBack uebernommen")
+	ok(sc.tableTheme == "default", "sanitize: nicht-String tableTheme -> default")
+	ok(sc.avatarFrame == "gold", "sanitize: avatarFrame uebernommen")
+	ok(Profile.sanitize({ xp = -10 }, 1, "X").xp == 0, "sanitize: negatives xp -> 0")
+	local xp = Profile.default(1, "X")
+	Profile.addXp(xp, 30)
+	Profile.addXp(xp, 0)
+	Profile.addXp(xp, -100) -- negativ wird ignoriert (>=0)
+	ok(xp.xp == 30, "addXp: summiert, negativ ignoriert")
+	Profile.setCosmetic(xp, "cardBack", "forest")
+	Profile.setCosmetic(xp, "tableTheme", "blue")
+	Profile.setCosmetic(xp, "avatarFrame", "silver")
+	Profile.setCosmetic(xp, "unknownCat", "x") -- ignoriert
+	Profile.setCosmetic(xp, "cardBack", "") -- leere id ignoriert
+	ok(xp.cardBack == "forest" and xp.tableTheme == "blue" and xp.avatarFrame == "silver", "setCosmetic setzt je Kategorie")
+	local pubc = Profile.publicView(xp)
+	ok(pubc.xp == 30 and pubc.cardBack == "forest" and pubc.tableTheme == "blue" and pubc.avatarFrame == "silver", "publicView enthaelt xp + Kosmetik")
+end
+
+-- ===================== Progression (XP/Level + Kosmetik) =====================
+print("== Progression: XP / Level ==")
+do
+	-- Level 1 ab 0 XP; xpForLevel(1) = 0.
+	ok(Progression.levelFromXp(0) == 1, "0 XP -> Level 1")
+	ok(Progression.xpForLevel(1) == 0, "xpForLevel(1) = 0")
+	-- Genau BASE_XP -> Level 2; einen Punkt darunter -> noch Level 1.
+	ok(Progression.levelFromXp(Progression.BASE_XP) == 2, "BASE_XP -> Level 2")
+	ok(Progression.levelFromXp(Progression.BASE_XP - 1) == 1, "knapp drunter -> Level 1")
+	-- xpForLevel/levelFromXp sind konsistent: an jeder Schwelle steigt das Level.
+	for lvl = 1, 10 do
+		local need = Progression.xpForLevel(lvl)
+		ok(Progression.levelFromXp(need) == lvl, "xpForLevel/levelFromXp konsistent bei " .. lvl)
+		if lvl > 1 then
+			ok(Progression.levelFromXp(need - 1) == lvl - 1, "eine XP unter Schwelle -> Level-1 bei " .. lvl)
+		end
+	end
+	-- Deckel bei MAX_LEVEL.
+	ok(Progression.levelFromXp(1e9) == Progression.MAX_LEVEL, "riesige XP -> MAX_LEVEL")
+	-- progress(): Felder + Prozent.
+	local pr = Progression.progress(Progression.BASE_XP) -- exakt Level 2, 0 im Level
+	ok(pr.level == 2 and pr.xpInLevel == 0, "progress: Level 2, 0 im Level")
+	ok(pr.pct == 0 and pr.max == false, "progress: pct 0, nicht max")
+	local prMax = Progression.progress(1e9)
+	ok(prMax.max == true and prMax.pct == 1 and prMax.xpToNext == 0, "progress: MAX -> pct 1, xpToNext 0")
+	-- Negatives/Unsinn-XP wird auf 0 geklemmt.
+	ok(Progression.progress(-50).level == 1, "progress(negativ) -> Level 1")
+end
+
+print("== Progression: Kosmetik-Kataloge ==")
+do
+	for _, cat in { "cardBack", "tableTheme", "avatarFrame" } do
+		local list = Progression.catalog(cat)
+		ok(type(list) == "table" and #list >= 1, "catalog " .. cat .. " vorhanden")
+		ok(list[1].level == 1, "default-Item von " .. cat .. " ist Level 1")
+		ok(Progression.defaultId(cat) == list[1].id, "defaultId = erstes Item (" .. cat .. ")")
+		-- Default ist immer freigeschaltet (auch auf Level 1).
+		ok(Progression.isUnlocked(1, cat, list[1].id) == true, "default von " .. cat .. " auf Level 1 frei")
+		-- colorOf liefert ein {r,g,b}-Tripel.
+		local col = Progression.colorOf(cat, list[1].id)
+		ok(type(col) == "table" and #col == 3, "colorOf " .. cat .. " -> {r,g,b}")
+	end
+	ok(Progression.catalog("quatsch") == nil, "unbekannte Kategorie -> nil")
+	ok(Progression.find("cardBack", "gibtsnicht") == nil, "find: unbekannte id -> nil")
+	-- isUnlocked: gesperrtes Item erst ab seinem Level.
+	local crimson = Progression.find("cardBack", "crimson")
+	ok(crimson ~= nil and crimson.level >= 2, "crimson existiert und braucht Level >= 2")
+	ok(Progression.isUnlocked(crimson.level - 1, "cardBack", "crimson") == false, "crimson unter Level gesperrt")
+	ok(Progression.isUnlocked(crimson.level, "cardBack", "crimson") == true, "crimson ab Level frei")
+	-- isUnlocked auf unbekannte id/Kategorie -> false (kein Crash).
+	ok(Progression.isUnlocked(99, "cardBack", "gibtsnicht") == false, "isUnlocked unbekannte id -> false")
+	-- colorOf-Fallback bei unbekannter id -> Default-Farbe der Kategorie.
+	ok(type(Progression.colorOf("cardBack", "gibtsnicht")) == "table", "colorOf-Fallback liefert Default-Farbe")
 end
 
 print("== Profile: refill + Mutatoren ==")

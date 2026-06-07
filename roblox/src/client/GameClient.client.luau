@@ -17,6 +17,7 @@ local SoundService = game:GetService("SoundService")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Cards = require(Shared:WaitForChild("Cards"))
 local Strings = require(Shared:WaitForChild("Strings"))
+local Progression = require(Shared:WaitForChild("Progression"))
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local CreateRoomFn = Remotes:WaitForChild("CreateRoom")
@@ -28,6 +29,7 @@ local ActionEvent = Remotes:WaitForChild("Action")
 local RebuyEvent = Remotes:WaitForChild("Rebuy")
 local ChatEvent = Remotes:WaitForChild("Chat")
 local TutorialDoneEvent = Remotes:WaitForChild("TutorialDone")
+local EquipEvent = Remotes:WaitForChild("Equip")
 local StateEvent = Remotes:WaitForChild("State")
 
 local player = Players.LocalPlayer
@@ -54,6 +56,14 @@ local COL_TEXT = Color3.fromRGB(235, 235, 235)
 local COL_DARK = Color3.fromRGB(28, 34, 44)
 local COL_ACCENT = Color3.fromRGB(46, 120, 200)
 local COL_GOLD = Color3.fromRGB(240, 195, 70)
+
+-- Wandelt ein {r,g,b}-Tripel (aus Shared/Progression) in ein Color3.
+local function rgbColor(triple): Color3
+	if type(triple) == "table" and triple[1] then
+		return Color3.fromRGB(triple[1], triple[2], triple[3])
+	end
+	return Color3.fromRGB(255, 255, 255)
+end
 
 local function suitColor(suit: number?): Color3
 	local s = suit and Cards.suitById(suit)
@@ -295,8 +305,8 @@ profileWallet.Text = "🪙 —"
 profileWallet.Parent = profileCard
 
 local profileStats = Instance.new("TextLabel")
-profileStats.Size = UDim2.new(1, -20, 0, 38)
-profileStats.Position = UDim2.new(0, 12, 0, 70)
+profileStats.Size = UDim2.new(1, -20, 0, 22)
+profileStats.Position = UDim2.new(0, 12, 0, 66)
 profileStats.BackgroundTransparency = 1
 profileStats.Font = Enum.Font.Gotham
 profileStats.TextSize = 13
@@ -305,6 +315,55 @@ profileStats.TextXAlignment = Enum.TextXAlignment.Left
 profileStats.TextYAlignment = Enum.TextYAlignment.Top
 profileStats.Text = ""
 profileStats.Parent = profileCard
+
+-- Level-Abzeichen (oben rechts auf der Profil-Karte).
+local levelBadge = Instance.new("TextLabel")
+levelBadge.Size = UDim2.new(0, 64, 0, 26)
+levelBadge.Position = UDim2.new(1, -76, 0, 9)
+levelBadge.BackgroundColor3 = COL_GOLD
+levelBadge.Font = Enum.Font.GothamBold
+levelBadge.TextSize = 14
+levelBadge.TextColor3 = Color3.fromRGB(30, 26, 12)
+levelBadge.Text = "Lv 1"
+levelBadge.Parent = profileCard
+mkCorner(levelBadge, 8)
+
+-- XP-Fortschrittsbalken (unten auf der Profil-Karte).
+local xpBarBg = Instance.new("Frame")
+xpBarBg.Size = UDim2.new(1, -20, 0, 12)
+xpBarBg.Position = UDim2.new(0, 12, 0, 96)
+xpBarBg.BackgroundColor3 = Color3.fromRGB(18, 22, 30)
+xpBarBg.BorderSizePixel = 0
+xpBarBg.Parent = profileCard
+mkCorner(xpBarBg, 6)
+
+local xpBarFill = Instance.new("Frame")
+xpBarFill.Size = UDim2.new(0, 0, 1, 0)
+xpBarFill.BackgroundColor3 = COL_GOLD
+xpBarFill.BorderSizePixel = 0
+xpBarFill.Parent = xpBarBg
+mkCorner(xpBarFill, 6)
+
+local xpBarText = Instance.new("TextLabel")
+xpBarText.Size = UDim2.new(1, 0, 1, 0)
+xpBarText.BackgroundTransparency = 1
+xpBarText.Font = Enum.Font.GothamBold
+xpBarText.TextSize = 10
+xpBarText.TextColor3 = COL_TEXT
+xpBarText.Text = ""
+xpBarText.Parent = xpBarBg
+
+-- "Anpassen" (Kosmetik) — oeffnet das Kosmetik-Menue.
+local customizeBtn = Instance.new("TextButton")
+customizeBtn.Size = UDim2.new(0, 96, 0, 40)
+customizeBtn.Position = UDim2.new(0.5, 216, 0, 50)
+customizeBtn.BackgroundColor3 = COL_DARK
+customizeBtn.TextColor3 = COL_GOLD
+customizeBtn.Font = Enum.Font.GothamBold
+customizeBtn.TextSize = 15
+customizeBtn.Text = "🎨 Anpassen"
+customizeBtn.Parent = lobbyScreen
+mkCorner(customizeBtn, 10)
 
 -- ---- Schnell spielen (Matchmaking) ----
 local quickBtn = Instance.new("TextButton")
@@ -737,6 +796,210 @@ tutSkipBtn.Activated:Connect(finishTutorial)
 helpBtn.Activated:Connect(showTutorial)
 
 -- =====================================================================
+-- ====================== KOSMETIK-MENUE (Overlay) =====================
+-- Freischaltbare Looks (Kartenrueckseiten, Tisch-Themen, Avatar-Rahmen).
+-- Rein optisch — per Level freigeschaltet (kein Pay-to-Win, kein Gluecksspiel).
+
+local COSMETIC_ROWS = {
+	{ key = "cardBack", de = "Kartenrückseite", en = "Card back" },
+	{ key = "tableTheme", de = "Tisch-Thema", en = "Table theme" },
+	{ key = "avatarFrame", de = "Avatar-Rahmen", en = "Avatar frame" },
+}
+
+local cosmeticsOverlay = Instance.new("Frame")
+cosmeticsOverlay.Size = UDim2.new(1, 0, 1, 0)
+cosmeticsOverlay.BackgroundColor3 = Color3.fromRGB(6, 9, 14)
+cosmeticsOverlay.BackgroundTransparency = 0.25
+cosmeticsOverlay.BorderSizePixel = 0
+cosmeticsOverlay.Visible = false
+cosmeticsOverlay.ZIndex = 100
+cosmeticsOverlay.Parent = root
+
+local cosCard = Instance.new("Frame")
+cosCard.Size = UDim2.new(0, 660, 0, 470)
+cosCard.Position = UDim2.new(0.5, -330, 0.5, -235)
+cosCard.BackgroundColor3 = COL_DARK
+cosCard.BorderSizePixel = 0
+cosCard.ZIndex = 101
+cosCard.Parent = cosmeticsOverlay
+mkCorner(cosCard, 16)
+local cosStroke = Instance.new("UIStroke")
+cosStroke.Color = COL_GOLD
+cosStroke.Thickness = 2
+cosStroke.Parent = cosCard
+
+local cosTitle = Instance.new("TextLabel")
+cosTitle.Size = UDim2.new(1, -48, 0, 34)
+cosTitle.Position = UDim2.new(0, 24, 0, 18)
+cosTitle.BackgroundTransparency = 1
+cosTitle.Font = Enum.Font.GothamBold
+cosTitle.TextSize = 24
+cosTitle.TextColor3 = COL_GOLD
+cosTitle.TextXAlignment = Enum.TextXAlignment.Left
+cosTitle.Text = "🎨 Anpassen"
+cosTitle.ZIndex = 102
+cosTitle.Parent = cosCard
+
+local cosHint = Instance.new("TextLabel")
+cosHint.Size = UDim2.new(1, -48, 0, 18)
+cosHint.Position = UDim2.new(0, 24, 0, 50)
+cosHint.BackgroundTransparency = 1
+cosHint.Font = Enum.Font.Gotham
+cosHint.TextSize = 13
+cosHint.TextColor3 = Color3.fromRGB(170, 180, 195)
+cosHint.TextXAlignment = Enum.TextXAlignment.Left
+cosHint.Text = ""
+cosHint.ZIndex = 102
+cosHint.Parent = cosCard
+
+local cosClose = Instance.new("TextButton")
+cosClose.Size = UDim2.new(0, 36, 0, 36)
+cosClose.Position = UDim2.new(1, -44, 0, 14)
+cosClose.BackgroundTransparency = 1
+cosClose.Font = Enum.Font.GothamBold
+cosClose.TextSize = 24
+cosClose.TextColor3 = Color3.fromRGB(150, 160, 175)
+cosClose.Text = "✕"
+cosClose.ZIndex = 103
+cosClose.Parent = cosCard
+
+-- Pro Kategorie: Beschriftung + horizontaler Streifen mit Farb-Kacheln.
+local cosSwatchHolders = {} -- [category] = Frame (Container der Kacheln)
+for i, row in COSMETIC_ROWS do
+	local yTop = 84 + (i - 1) * 122
+	local rowLabel = Instance.new("TextLabel")
+	rowLabel.Size = UDim2.new(1, -48, 0, 20)
+	rowLabel.Position = UDim2.new(0, 24, 0, yTop)
+	rowLabel.BackgroundTransparency = 1
+	rowLabel.Font = Enum.Font.GothamBold
+	rowLabel.TextSize = 15
+	rowLabel.TextColor3 = COL_TEXT
+	rowLabel.TextXAlignment = Enum.TextXAlignment.Left
+	rowLabel.Text = if lang == "de" then row.de else row.en
+	rowLabel.ZIndex = 102
+	rowLabel.Name = "Label_" .. row.key
+	rowLabel.Parent = cosCard
+
+	local holder = Instance.new("Frame")
+	holder.Size = UDim2.new(1, -48, 0, 88)
+	holder.Position = UDim2.new(0, 24, 0, yTop + 22)
+	holder.BackgroundTransparency = 1
+	holder.ZIndex = 102
+	holder.Parent = cosCard
+	local hl = Instance.new("UIListLayout")
+	hl.FillDirection = Enum.FillDirection.Horizontal
+	hl.VerticalAlignment = Enum.VerticalAlignment.Center
+	hl.Padding = UDim.new(0, 10)
+	hl.Parent = holder
+	cosSwatchHolders[row.key] = holder
+end
+
+local cosmeticsShown = false
+
+-- Baut die Kacheln einer Kategorie neu auf (Farbe, Name, Schloss, Auswahl).
+local function renderCosmetics()
+	local prof = myProfile or {}
+	local level = Progression.levelFromXp(prof.xp or 0)
+	cosTitle.Text = if lang == "de" then "🎨 Anpassen" else "🎨 Customize"
+	cosHint.Text = if lang == "de"
+		then `Level {level} · steige im Level auf, um mehr freizuschalten`
+		else `Level {level} · level up to unlock more`
+	for _, row in COSMETIC_ROWS do
+		local holder = cosSwatchHolders[row.key]
+		-- Vorhandene Kacheln entfernen (Layout behalten).
+		for _, ch in holder:GetChildren() do
+			if ch:IsA("TextButton") then
+				ch:Destroy()
+			end
+		end
+		local label = cosCard:FindFirstChild("Label_" .. row.key)
+		if label then
+			label.Text = if lang == "de" then row.de else row.en
+		end
+		local equippedId = prof[row.key] or Progression.defaultId(row.key)
+		for j, item in Progression.catalog(row.key) do
+			local unlocked = level >= item.level
+			local tile = Instance.new("TextButton")
+			tile.Size = UDim2.new(0, 84, 0, 84)
+			tile.BackgroundColor3 = rgbColor(item.color)
+			tile.AutoButtonColor = unlocked
+			tile.Text = ""
+			tile.LayoutOrder = j
+			tile.ZIndex = 103
+			tile.Parent = holder
+			mkCorner(tile, 10)
+			if not unlocked then
+				tile.BackgroundTransparency = 0.45
+			end
+			-- Auswahl-Rahmen (gold) fuer das aktuell getragene Item.
+			if item.id == equippedId then
+				local sel = Instance.new("UIStroke")
+				sel.Color = COL_GOLD
+				sel.Thickness = 3
+				sel.Parent = tile
+			end
+			-- Name unten auf der Kachel.
+			local nm = Instance.new("TextLabel")
+			nm.Size = UDim2.new(1, -4, 0, 16)
+			nm.Position = UDim2.new(0, 2, 1, -18)
+			nm.BackgroundTransparency = 1
+			nm.Font = Enum.Font.GothamBold
+			nm.TextSize = 11
+			nm.TextColor3 = Color3.fromRGB(255, 255, 255)
+			nm.TextStrokeTransparency = 0.4
+			nm.Text = if lang == "de" then item.name else item.nameEn
+			nm.ZIndex = 104
+			nm.Parent = tile
+			-- Schloss + benoetigtes Level fuer gesperrte Items.
+			if not unlocked then
+				local lock = Instance.new("TextLabel")
+				lock.Size = UDim2.new(1, 0, 0, 28)
+				lock.Position = UDim2.new(0, 0, 0, 14)
+				lock.BackgroundTransparency = 1
+				lock.Font = Enum.Font.GothamBold
+				lock.TextSize = 13
+				lock.TextColor3 = Color3.fromRGB(255, 255, 255)
+				lock.TextStrokeTransparency = 0.3
+				lock.Text = `🔒 Lvl {item.level}`
+				lock.ZIndex = 104
+				lock.Parent = tile
+			end
+			if unlocked then
+				local catKey, itemId = row.key, item.id
+				tile.Activated:Connect(function()
+					if (myProfile and myProfile[catKey]) == itemId then
+						return
+					end
+					playSound("click")
+					if myProfile then
+						myProfile[catKey] = itemId -- optimistisch
+					end
+					pcall(function()
+						EquipEvent:FireServer(catKey, itemId)
+					end)
+					renderCosmetics()
+				end)
+			end
+		end
+	end
+end
+
+local function showCosmetics()
+	cosmeticsShown = true
+	renderCosmetics()
+	cosmeticsOverlay.Visible = true
+	scaleIn(cosCard, 0.85, 0.2)
+end
+
+local function hideCosmetics()
+	cosmeticsShown = false
+	cosmeticsOverlay.Visible = false
+end
+
+cosClose.Activated:Connect(hideCosmetics)
+customizeBtn.Activated:Connect(showCosmetics)
+
+-- =====================================================================
 -- =========================== TISCH-SCREEN ============================
 -- =====================================================================
 local tableScreen = Instance.new("Frame")
@@ -1155,6 +1418,10 @@ local function showScreen(name)
 	tableScreen.Visible = name == "table"
 	leaveBtn.Visible = name == "table"
 	helpBtn.Visible = name == "lobby"
+	-- Kosmetik-Menue schliesst sich, sobald man die Lobby verlaesst.
+	if name ~= "lobby" and cosmeticsShown then
+		hideCosmetics()
+	end
 end
 
 local function renderProfile(prof)
@@ -1166,12 +1433,21 @@ local function renderProfile(prof)
 	profileWallet.Text = `🪙 {prof.wallet or 0}`
 	profileStats.Text = string.format(
 		(if lang == "de"
-			then "Matches gewonnen: %d   ·   Haende gewonnen: %d\nGroesster Pot: %d 🪙"
-			else "Matches won: %d   ·   Hands won: %d\nBiggest pot: %d 🪙"),
+			then "Matches gewonnen: %d   ·   Haende gewonnen: %d   ·   Groesster Pot: %d 🪙"
+			else "Matches won: %d   ·   Hands won: %d   ·   Biggest pot: %d 🪙"),
 		prof.matchesWon or 0,
 		prof.handsWon or 0,
 		prof.biggestPot or 0
 	)
+	-- Level + XP-Balken aus der reinen Progressions-Logik ableiten.
+	local pr = Progression.progress(prof.xp or 0)
+	levelBadge.Text = `Lv {pr.level}`
+	xpBarFill.Size = UDim2.new(pr.pct, 0, 1, 0)
+	if pr.max then
+		xpBarText.Text = if lang == "de" then "MAX" else "MAX"
+	else
+		xpBarText.Text = `{pr.xpInLevel} / {pr.xpToNext} XP`
+	end
 end
 
 local function renderLobby()
@@ -1248,6 +1524,11 @@ local function renderTable(view)
 		sub ..= `   ·   💵 Buy-in {view.buyIn or 0}`
 	end
 	subHeader.Text = sub
+
+	-- Tisch-Thema (Filz-Farbe) gemaess der Vorliebe des Betrachters.
+	if view.tableThemeColor then
+		felt.BackgroundColor3 = rgbColor(view.tableThemeColor)
+	end
 
 	-- Community (nur neu hinzugekommene Karten einblenden + Deal-Sound)
 	clear(community)
@@ -1331,6 +1612,13 @@ local function renderTable(view)
 		av.Parent = seat
 		mkCorner(av, 15)
 		loadAvatar(av, p.id)
+		-- Avatar-Rahmen (Kosmetik): farbiger Ring um das Kopfbild.
+		if p.frameColor then
+			local frameStroke = Instance.new("UIStroke")
+			frameStroke.Color = rgbColor(p.frameColor)
+			frameStroke.Thickness = 3
+			frameStroke.Parent = av
+		end
 
 		local nm = Instance.new("TextLabel")
 		nm.Size = UDim2.new(1, -42, 0, 18)
@@ -1381,6 +1669,17 @@ local function renderTable(view)
 			end
 			handTxt.Text = table.concat(parts, " ")
 			handTxt.Parent = seat
+		elseif not view.waiting and not view.matchOver and not p.folded and p.backColor then
+			-- Gegner: zwei kleine, verdeckte Karten in ihrer gewaehlten Rueckseiten-Farbe.
+			for c = 1, 2 do
+				local back = Instance.new("Frame")
+				back.Size = UDim2.new(0, 14, 0, 20)
+				back.Position = UDim2.new(0, 4 + (c - 1) * 17, 0, 40)
+				back.BackgroundColor3 = rgbColor(p.backColor)
+				back.BorderSizePixel = 0
+				back.Parent = seat
+				mkCorner(back, 3)
+			end
 		end
 		-- Equity-Anzeige waehrend des Run-outs
 		if eqMap[p.seat] ~= nil then
@@ -1572,6 +1871,9 @@ langBtn.Activated:Connect(function()
 	if tutorialOverlay.Visible then
 		renderTutStep()
 	end
+	if cosmeticsShown then
+		renderCosmetics()
+	end
 end)
 
 -- =====================================================================
@@ -1596,6 +1898,9 @@ StateEvent.OnClientEvent:Connect(function(view)
 		renderProfile(view.profile)
 		if currentScreen == "lobby" then
 			renderLobby()
+		end
+		if cosmeticsShown then
+			renderCosmetics()
 		end
 	else
 		-- Tisch-Sicht

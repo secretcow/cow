@@ -36,6 +36,10 @@ function Profile.default(userId, name)
 		lastDailyDay = 0, -- Tagesindex des letzten beanspruchten Bonus
 		dailyStreak = 0, -- aktuelle Login-Serie
 		tutorialDone = false, -- hat der Spieler das Einsteiger-Tutorial gesehen?
+		xp = 0, -- Erfahrungspunkte (rein kosmetische Progression)
+		cardBack = "default", -- ausgewaehlte Kartenrueckseite (Kosmetik)
+		tableTheme = "default", -- ausgewaehltes Tisch-Thema (Kosmetik)
+		avatarFrame = "default", -- ausgewaehlter Avatar-Rahmen (Kosmetik)
 	}
 end
 
@@ -56,6 +60,10 @@ function Profile.sanitize(raw, userId, name)
 		lastDailyDay = math.max(0, toInt(raw.lastDailyDay, 0)),
 		dailyStreak = math.max(0, toInt(raw.dailyStreak, 0)),
 		tutorialDone = raw.tutorialDone == true,
+		xp = math.max(0, toInt(raw.xp, 0)),
+		cardBack = (type(raw.cardBack) == "string" and raw.cardBack) or "default",
+		tableTheme = (type(raw.tableTheme) == "string" and raw.tableTheme) or "default",
+		avatarFrame = (type(raw.avatarFrame) == "string" and raw.avatarFrame) or "default",
 	}
 	if name and name ~= "" then
 		p.name = name
@@ -86,6 +94,29 @@ end
 -- Markiert das Einsteiger-Tutorial als gesehen (wird einmalig pro Spieler gesetzt).
 function Profile.markTutorialDone(p)
 	p.tutorialDone = true
+	return p
+end
+
+-- Vergibt XP (reine Kosmetik-Progression, nie negativ). Gibt das Profil zurueck.
+function Profile.addXp(p, amount)
+	local add = math.max(0, toInt(amount, 0))
+	p.xp = math.max(0, toInt(p.xp, 0)) + add
+	return p
+end
+
+-- Setzt ein ausgewaehltes Kosmetik-Item (cardBack | tableTheme | avatarFrame).
+-- Validierung (Freischaltung per Level) erfolgt im Server vor dem Aufruf.
+function Profile.setCosmetic(p, category, id)
+	if type(id) ~= "string" or id == "" then
+		return p
+	end
+	if category == "cardBack" then
+		p.cardBack = id
+	elseif category == "tableTheme" then
+		p.tableTheme = id
+	elseif category == "avatarFrame" then
+		p.avatarFrame = id
+	end
 	return p
 end
 
@@ -132,6 +163,10 @@ function Profile.publicView(p)
 		matchesWon = p.matchesWon or 0,
 		handsWon = p.handsWon or 0,
 		biggestPot = p.biggestPot or 0,
+		xp = p.xp or 0,
+		cardBack = p.cardBack or "default",
+		tableTheme = p.tableTheme or "default",
+		avatarFrame = p.avatarFrame or "default",
 	}
 end
 
