@@ -649,6 +649,43 @@ local function showQuestRewardToast(r)
 		else `🎯 Quest complete: +{r.chips} 🪙{xpPart}`)
 end
 
+-- Saison-Belohnung (beim Saison-Wechsel gutgeschrieben) — wiederverwendet den Toast.
+local function showSeasonRewardToast(r)
+	if not (r and r.chips) then
+		return
+	end
+	local tierName = if lang == "de" then (r.name or "") else (r.nameEn or r.name or "")
+	local xpPart = if r.xp and r.xp > 0 then ` · +{r.xp} XP` else ""
+	showToast(if lang == "de"
+		then `🏆 Saison-Belohnung ({tierName}): +{r.chips} 🪙{xpPart}`
+		else `🏆 Season reward ({tierName}): +{r.chips} 🪙{xpPart}`)
+end
+
+-- Formatiert eine Restdauer (Sekunden) kompakt: "3T 4Std" / "3d 4h" bzw. "5Min".
+local function fmtDuration(sec)
+	sec = math.max(0, math.floor(tonumber(sec) or 0))
+	local d = math.floor(sec / 86400)
+	local h = math.floor((sec % 86400) / 3600)
+	local m = math.floor((sec % 3600) / 60)
+	if lang == "de" then
+		if d > 0 then
+			return `{d}T {h}Std`
+		elseif h > 0 then
+			return `{h}Std {m}Min`
+		else
+			return `{m}Min`
+		end
+	else
+		if d > 0 then
+			return `{d}d {h}h`
+		elseif h > 0 then
+			return `{h}h {m}m`
+		else
+			return `{m}m`
+		end
+	end
+end
+
 -- =====================================================================
 -- ===================== EINSTEIGER-TUTORIAL ==========================
 -- =====================================================================
@@ -1560,6 +1597,272 @@ questBtn.Activated:Connect(showQuests)
 end -- do (Quest-Overlay)
 
 -- =====================================================================
+-- ===================== SAISON-BESTENLISTE ===========================
+-- =====================================================================
+-- Woechentliche globale Rangliste: zeigt Top-10 + eigene Punkte + Restzeit der
+-- Saison + Belohnungsstufen. Die Daten kommen on-demand vom Server (RemoteFunction,
+-- serverseitig gecacht). In ein do...end gekapselt, um Top-Level-Register zu sparen.
+-- Saison-Overlay-Steuerung gebuendelt in EINER Top-Level-Tabelle (spart Register):
+--   seasonOv.shown  — ist das Overlay sichtbar?
+--   seasonOv.render() / seasonOv.hide() — von showScreen/langBtn aufgerufen.
+local seasonOv = { shown = false }
+do
+	local RequestLeaderboardFn = Remotes:WaitForChild("RequestLeaderboard")
+	local seasonData = nil -- zuletzt vom Server geholte Bestenliste/Saison-Daten
+
+	-- "Saison" — woechentliche globale Bestenliste mit Punkten + End-Belohnung.
+	local seasonBtn = Instance.new("TextButton")
+	seasonBtn.Size = UDim2.new(0, 96, 0, 40)
+	seasonBtn.Position = UDim2.new(0.5, 216, 0, 98)
+	seasonBtn.BackgroundColor3 = Color3.fromRGB(120, 90, 200)
+	seasonBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	seasonBtn.Font = Enum.Font.GothamBold
+	seasonBtn.TextSize = 15
+	seasonBtn.Text = "🏆 Saison"
+	seasonBtn.Parent = lobbyScreen
+	mkCorner(seasonBtn, 10)
+
+	local seasonOverlay = Instance.new("Frame")
+	seasonOverlay.Size = UDim2.new(1, 0, 1, 0)
+	seasonOverlay.BackgroundColor3 = Color3.fromRGB(6, 9, 14)
+	seasonOverlay.BackgroundTransparency = 0.25
+	seasonOverlay.BorderSizePixel = 0
+	seasonOverlay.Visible = false
+	seasonOverlay.ZIndex = 100
+	seasonOverlay.Parent = root
+
+	local seasonCard = Instance.new("Frame")
+	seasonCard.Size = UDim2.new(0, 560, 0, 500)
+	seasonCard.Position = UDim2.new(0.5, -280, 0.5, -250)
+	seasonCard.BackgroundColor3 = COL_DARK
+	seasonCard.BorderSizePixel = 0
+	seasonCard.ZIndex = 101
+	seasonCard.Parent = seasonOverlay
+	mkCorner(seasonCard, 16)
+	local seasonStroke = Instance.new("UIStroke")
+	seasonStroke.Color = Color3.fromRGB(150, 120, 230)
+	seasonStroke.Thickness = 2
+	seasonStroke.Parent = seasonCard
+
+	local seasonTitle = Instance.new("TextLabel")
+	seasonTitle.Size = UDim2.new(1, -48, 0, 30)
+	seasonTitle.Position = UDim2.new(0, 24, 0, 16)
+	seasonTitle.BackgroundTransparency = 1
+	seasonTitle.Font = Enum.Font.GothamBold
+	seasonTitle.TextSize = 23
+	seasonTitle.TextColor3 = Color3.fromRGB(190, 170, 255)
+	seasonTitle.TextXAlignment = Enum.TextXAlignment.Left
+	seasonTitle.Text = "🏆 Saison"
+	seasonTitle.ZIndex = 102
+	seasonTitle.Parent = seasonCard
+
+	-- Restzeit + eigene Punkte.
+	local seasonInfo = Instance.new("TextLabel")
+	seasonInfo.Size = UDim2.new(1, -48, 0, 18)
+	seasonInfo.Position = UDim2.new(0, 24, 0, 46)
+	seasonInfo.BackgroundTransparency = 1
+	seasonInfo.Font = Enum.Font.Gotham
+	seasonInfo.TextSize = 13
+	seasonInfo.TextColor3 = Color3.fromRGB(160, 170, 185)
+	seasonInfo.TextXAlignment = Enum.TextXAlignment.Left
+	seasonInfo.Text = ""
+	seasonInfo.ZIndex = 102
+	seasonInfo.Parent = seasonCard
+
+	local seasonClose = Instance.new("TextButton")
+	seasonClose.Size = UDim2.new(0, 36, 0, 36)
+	seasonClose.Position = UDim2.new(1, -44, 0, 14)
+	seasonClose.BackgroundTransparency = 1
+	seasonClose.Font = Enum.Font.GothamBold
+	seasonClose.TextSize = 24
+	seasonClose.TextColor3 = Color3.fromRGB(150, 160, 175)
+	seasonClose.Text = "✕"
+	seasonClose.ZIndex = 103
+	seasonClose.Parent = seasonCard
+
+	-- Liste der Top-Spieler (scrollbar).
+	local seasonList = Instance.new("ScrollingFrame")
+	seasonList.Size = UDim2.new(1, -32, 1, -150)
+	seasonList.Position = UDim2.new(0, 16, 0, 74)
+	seasonList.BackgroundTransparency = 1
+	seasonList.BorderSizePixel = 0
+	seasonList.ScrollBarThickness = 6
+	seasonList.CanvasSize = UDim2.new(0, 0, 0, 0)
+	seasonList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	seasonList.ZIndex = 102
+	seasonList.Parent = seasonCard
+	local seasonLayout = Instance.new("UIListLayout")
+	seasonLayout.FillDirection = Enum.FillDirection.Vertical
+	seasonLayout.Padding = UDim.new(0, 6)
+	seasonLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	seasonLayout.Parent = seasonList
+
+	-- Fusszeile: naechste Belohnungsstufe / Belohnungs-Hinweis.
+	local seasonFoot = Instance.new("TextLabel")
+	seasonFoot.Size = UDim2.new(1, -48, 0, 56)
+	seasonFoot.Position = UDim2.new(0, 24, 1, -68)
+	seasonFoot.BackgroundTransparency = 1
+	seasonFoot.Font = Enum.Font.Gotham
+	seasonFoot.TextSize = 12
+	seasonFoot.TextColor3 = Color3.fromRGB(150, 160, 175)
+	seasonFoot.TextXAlignment = Enum.TextXAlignment.Left
+	seasonFoot.TextYAlignment = Enum.TextYAlignment.Top
+	seasonFoot.TextWrapped = true
+	seasonFoot.Text = ""
+	seasonFoot.ZIndex = 102
+	seasonFoot.Parent = seasonCard
+
+	-- Naechste erreichbare Belohnungsstufe ueber den eigenen Punkten (oder Top-Stufe).
+	local function nextRewardText(points)
+		local rewards = seasonData and seasonData.rewards
+		if type(rewards) ~= "table" then
+			return ""
+		end
+		-- REWARDS sind absteigend nach minPoints sortiert; finde die naechsthoehere.
+		local nextR = nil
+		for _, r in rewards do
+			if points < r.minPoints then
+				if nextR == nil or r.minPoints < nextR.minPoints then
+					nextR = r
+				end
+			end
+		end
+		if nextR then
+			local nm = if lang == "de" then nextR.name else (nextR.nameEn or nextR.name)
+			local need = nextR.minPoints - points
+			return if lang == "de"
+				then `Noch {need} Punkte bis Stufe „{nm}" (+{nextR.chips} 🪙).`
+				else `{need} more points to reach "{nm}" (+{nextR.chips} 🪙).`
+		end
+		return if lang == "de"
+			then "Höchste Belohnungsstufe erreicht! 🏆"
+			else "Top reward tier reached! 🏆"
+	end
+
+	-- Baut die Bestenliste neu auf (aus seasonData).
+	local function renderSeason()
+		seasonTitle.Text = if seasonData and seasonData.season
+			then (if lang == "de" then `🏆 Saison #{seasonData.season.number}` else `🏆 Season #{seasonData.season.number}`)
+			else (if lang == "de" then "🏆 Saison" else "🏆 Season")
+		if seasonData and seasonData.season then
+			local s = seasonData.season
+			seasonInfo.Text = if lang == "de"
+				then `Endet in {fmtDuration(s.secondsLeft)}   ·   Deine Punkte: {s.points}`
+				else `Ends in {fmtDuration(s.secondsLeft)}   ·   Your points: {s.points}`
+			seasonFoot.Text = nextRewardText(s.points or 0)
+		else
+			seasonInfo.Text = if lang == "de" then "Lade Bestenliste …" else "Loading leaderboard …"
+			seasonFoot.Text = ""
+		end
+		for _, ch in seasonList:GetChildren() do
+			if not ch:IsA("UIListLayout") then
+				ch:Destroy()
+			end
+		end
+		local top = (seasonData and seasonData.top) or {}
+		local myId = seasonData and seasonData.me and seasonData.me.userId
+		if #top == 0 then
+			local note = Instance.new("TextLabel")
+			note.Size = UDim2.new(1, -16, 0, 50)
+			note.BackgroundTransparency = 1
+			note.Font = Enum.Font.Gotham
+			note.TextSize = 15
+			note.TextColor3 = Color3.fromRGB(170, 180, 195)
+			note.TextWrapped = true
+			note.LayoutOrder = 1
+			note.ZIndex = 103
+			note.Text = if lang == "de"
+				then "Noch keine Einträge in dieser Saison. Spiel ein Match und sei der Erste! 🐄"
+				else "No entries yet this season. Play a match and be the first! 🐄"
+			note.Parent = seasonList
+			return
+		end
+		for i, e in top do
+			local mine = tostring(e.userId) == tostring(myId)
+			local row = Instance.new("Frame")
+			row.Size = UDim2.new(1, -8, 0, 38)
+			row.BackgroundColor3 = if mine then Color3.fromRGB(70, 60, 120) else Color3.fromRGB(38, 44, 56)
+			row.BorderSizePixel = 0
+			row.LayoutOrder = i
+			row.ZIndex = 102
+			row.Parent = seasonList
+			mkCorner(row, 8)
+
+			local rankLbl = Instance.new("TextLabel")
+			rankLbl.Size = UDim2.new(0, 44, 1, 0)
+			rankLbl.Position = UDim2.new(0, 8, 0, 0)
+			rankLbl.BackgroundTransparency = 1
+			rankLbl.Font = Enum.Font.GothamBold
+			rankLbl.TextSize = 16
+			rankLbl.TextColor3 = if e.rank == 1 then COL_GOLD elseif e.rank and e.rank <= 3 then Color3.fromRGB(200, 200, 210) else COL_TEXT
+			local medal = if e.rank == 1 then "🥇" elseif e.rank == 2 then "🥈" elseif e.rank == 3 then "🥉" else `#{e.rank}`
+			rankLbl.Text = medal
+			rankLbl.ZIndex = 103
+			rankLbl.Parent = row
+
+			local nameLbl = Instance.new("TextLabel")
+			nameLbl.Size = UDim2.new(1, -190, 1, 0)
+			nameLbl.Position = UDim2.new(0, 56, 0, 0)
+			nameLbl.BackgroundTransparency = 1
+			nameLbl.Font = if mine then Enum.Font.GothamBold else Enum.Font.Gotham
+			nameLbl.TextSize = 15
+			nameLbl.TextColor3 = COL_TEXT
+			nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+			nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+			nameLbl.Text = e.name or "Spieler"
+			nameLbl.ZIndex = 103
+			nameLbl.Parent = row
+
+			local ptsLbl = Instance.new("TextLabel")
+			ptsLbl.Size = UDim2.new(0, 120, 1, 0)
+			ptsLbl.Position = UDim2.new(1, -128, 0, 0)
+			ptsLbl.BackgroundTransparency = 1
+			ptsLbl.Font = Enum.Font.GothamBold
+			ptsLbl.TextSize = 15
+			ptsLbl.TextColor3 = Color3.fromRGB(190, 170, 255)
+			ptsLbl.TextXAlignment = Enum.TextXAlignment.Right
+			ptsLbl.Text = if lang == "de" then `{e.points} Pkt` else `{e.points} pts`
+			ptsLbl.ZIndex = 103
+			ptsLbl.Parent = row
+		end
+	end
+
+	-- Holt die Bestenliste vom Server (RemoteFunction yieldet -> in task.spawn).
+	local function refreshSeason()
+		task.spawn(function()
+			local ok, res = pcall(function()
+				return RequestLeaderboardFn:InvokeServer()
+			end)
+			if ok and type(res) == "table" then
+				seasonData = res
+				if seasonOv.shown then
+					renderSeason()
+				end
+			end
+		end)
+	end
+
+	local function showSeason()
+		seasonOv.shown = true
+		renderSeason() -- erst mit alten/Platzhalter-Daten, dann Refresh
+		refreshSeason()
+		seasonOverlay.Visible = true
+		scaleIn(seasonCard, 0.85, 0.2)
+	end
+
+	local function hideSeason()
+		seasonOv.shown = false
+		seasonOverlay.Visible = false
+	end
+
+	seasonClose.Activated:Connect(hideSeason)
+	seasonBtn.Activated:Connect(showSeason)
+	-- Nach aussen reichen (showScreen/langBtn): render/hide ueber die Tabelle.
+	seasonOv.render = renderSeason
+	seasonOv.hide = hideSeason
+end -- do (Saison-Overlay)
+
+-- =====================================================================
 -- =========================== TISCH-SCREEN ============================
 -- =====================================================================
 local tableScreen = Instance.new("Frame")
@@ -1988,6 +2291,9 @@ local function showScreen(name)
 		end
 		if questsShown then
 			hideQuests()
+		end
+		if seasonOv.shown then
+			seasonOv.hide()
 		end
 	end
 end
@@ -2463,6 +2769,9 @@ langBtn.Activated:Connect(function()
 	if questsShown then
 		renderQuests()
 	end
+	if seasonOv.shown then
+		seasonOv.render()
+	end
 end)
 
 -- =====================================================================
@@ -2477,6 +2786,8 @@ StateEvent.OnClientEvent:Connect(function(view)
 		showScreen("lobby")
 		renderLobby()
 		showDailyBonus(view.dailyBonus)
+		-- Saison-Belohnung (beim Saison-Wechsel gutgeschrieben), falls gemeldet.
+		showSeasonRewardToast(view.seasonReward)
 		-- Einsteiger-Tutorial beim allerersten Login automatisch zeigen.
 		if view.tutorialDone == false and not tutorialShownThisSession then
 			tutorialShownThisSession = true
@@ -2504,6 +2815,10 @@ StateEvent.OnClientEvent:Connect(function(view)
 		-- Quest-Belohnung abgeholt, falls der Server eine meldet.
 		if view.questReward and view.questReward.chips then
 			showQuestRewardToast(view.questReward)
+		end
+		-- Saison-Belohnung (Saison-Wechsel waehrend der Sitzung), falls gemeldet.
+		if view.seasonReward then
+			showSeasonRewardToast(view.seasonReward)
 		end
 	else
 		-- Tisch-Sicht

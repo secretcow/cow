@@ -44,6 +44,8 @@ function Profile.default(userId, name)
 		questDay = 0, -- Tagesindex, zu dem der Quest-Fortschritt gehoert
 		questProgress = {}, -- [questId] = Fortschritt (Zaehler)
 		questClaimed = {}, -- [questId] = true (Belohnung schon abgeholt)
+		seasonIndex = -1, -- Saison, zu der die Saison-Punkte gehoeren (-1 = noch keine)
+		seasonPoints = 0, -- Saison-Punkte in der aktuellen Saison (Leaderboard)
 	}
 end
 
@@ -91,6 +93,8 @@ function Profile.sanitize(raw, userId, name)
 		questDay = math.max(0, toInt(raw.questDay, 0)),
 		questProgress = questProgress,
 		questClaimed = questClaimed,
+		seasonIndex = toInt(raw.seasonIndex, -1),
+		seasonPoints = math.max(0, toInt(raw.seasonPoints, 0)),
 	}
 	if name and name ~= "" then
 		p.name = name

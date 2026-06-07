@@ -13,6 +13,7 @@ local Bot = require("../src/shared/Bot")
 local Progression = require("../src/shared/Progression")
 local Monetization = require("../src/shared/Monetization")
 local Quests = require("../src/shared/Quests")
+local Season = require("../src/shared/Season")
 
 local passed = 0
 local failed = 0
@@ -814,6 +815,100 @@ do
 	ok(s.questDay == 42, "sanitize bewahrt questDay")
 	ok(s.questProgress.win2hands == 2 and s.questProgress[5] == nil, "sanitize: nur string-Keys im Fortschritt")
 	ok(s.questClaimed.win2hands == true and s.questClaimed.bogus == nil, "sanitize: nur echte true-Claims")
+end
+
+-- ===================== Saison-Leaderboard =====================
+print("== Season: Index, Nummer & Restzeit ==")
+do
+	-- EPOCH = Saison #1, Start. Index 0 -> Nummer 1.
+	ok(Season.indexFor(Season.EPOCH) == 0, "EPOCH -> Index 0")
+	ok(Season.number(Season.EPOCH) == 1, "EPOCH -> Saison #1")
+	-- Eine Woche spaeter: Index 1, Nummer 2.
+	ok(Season.indexFor(Season.EPOCH + Season.LENGTH) == 1, "EPOCH + 1 Woche -> Index 1")
+	ok(Season.number(Season.EPOCH + Season.LENGTH) == 2, "EPOCH + 1 Woche -> Saison #2")
+	-- Kurz vor dem Wechsel noch Index 0.
+	ok(Season.indexFor(Season.EPOCH + Season.LENGTH - 1) == 0, "1 s vor Wechsel -> noch Index 0")
+	-- Restzeit: am Start = volle Woche; kurz vor Ende = 1 s; nie negativ.
+	ok(Season.secondsLeft(Season.EPOCH) == Season.LENGTH, "Restzeit am Start = volle Woche")
+	ok(Season.secondsLeft(Season.EPOCH + Season.LENGTH - 1) == 1, "Restzeit kurz vor Ende = 1 s")
+	ok(Season.secondsLeft(Season.EPOCH) >= 0, "Restzeit nie negativ")
+	-- Start-/Endzeit konsistent.
+	ok(Season.startTime(3) == Season.EPOCH + 3 * Season.LENGTH, "startTime(3) korrekt")
+	ok(Season.endTime(3) == Season.startTime(4), "endTime(3) = startTime(4)")
+end
+
+print("== Season: Punkte & Belohnungsstufen ==")
+do
+	ok(Season.pointsFor("handWin") == 1, "handWin = 1 Punkt")
+	ok(Season.pointsFor("bigPot") == 2, "bigPot = 2 Punkte")
+	ok(Season.pointsFor("matchWin") == 8, "matchWin = 8 Punkte")
+	ok(Season.pointsFor("unbekannt") == 0, "unbekannte Metrik = 0 Punkte")
+	-- Belohnung nach End-Punktzahl (hoechste erreichte Stufe).
+	ok(Season.rewardForPoints(0) == nil, "0 Punkte -> keine Belohnung")
+	ok(Season.rewardForPoints(14) == nil, "14 Punkte -> noch keine Stufe")
+	ok(Season.rewardForPoints(15).tier == 1, "15 Punkte -> Stufe 1 (Silber)")
+	ok(Season.rewardForPoints(79).tier == 2, "79 Punkte -> Stufe 2 (Gold)")
+	ok(Season.rewardForPoints(1000).tier == 4, "viele Punkte -> hoechste Stufe (Champion)")
+	-- addPoints summiert nach Metrik.
+	local p = Profile.default(1, "P")
+	p.seasonIndex = Season.indexFor(Season.EPOCH)
+	Season.addPoints(p, "handWin")
+	Season.addPoints(p, "matchWin")
+	ok(p.seasonPoints == 9, "addPoints: 1 + 8 = 9")
+	Season.addPoints(p, "unbekannt")
+	ok(p.seasonPoints == 9, "addPoints: unbekannte Metrik aendert nichts")
+end
+
+print("== Season: Rollover & Belohnungsvergabe ==")
+do
+	local s0 = Season.EPOCH -- Saison #1
+	local s1 = Season.EPOCH + Season.LENGTH -- Saison #2
+	-- Frisches Profil (seasonIndex -1): erster Sync uebernimmt nur, keine Belohnung.
+	local p = Profile.default(1, "P")
+	ok(p.seasonIndex == -1, "default seasonIndex = -1")
+	local r0 = Season.rollover(p, s0)
+	ok(r0 == nil, "erster Sync gibt keine Belohnung")
+	ok(p.seasonIndex == Season.indexFor(s0) and p.seasonPoints == 0, "Sync setzt Index, Punkte 0")
+	-- Gleiche Saison: kein Rollover, Punkte bleiben.
+	Season.addPoints(p, "matchWin") -- 8
+	Season.addPoints(p, "matchWin") -- 16
+	ok(Season.rollover(p, s0) == nil, "gleiche Saison -> kein Rollover")
+	ok(p.seasonPoints == 16, "gleiche Saison -> Punkte bleiben")
+	-- Saison-Wechsel mit genug Punkten (16 >= 15): Stufe 1, Punkte zuruecksetzen.
+	local r1 = Season.rollover(p, s1)
+	ok(r1 ~= nil and r1.tier == 1, "Wechsel mit 16 Pkt -> Belohnung Stufe 1")
+	ok(p.seasonPoints == 0, "nach Wechsel Punkte zurueckgesetzt")
+	ok(p.seasonIndex == Season.indexFor(s1), "nach Wechsel neuer Saison-Index")
+	-- Saison-Wechsel mit zu wenig Punkten: keine Belohnung, trotzdem Reset.
+	local q = Profile.default(2, "Q")
+	q.seasonIndex = Season.indexFor(s0)
+	Season.addPoints(q, "handWin") -- 1 Punkt (< 15)
+	local rq = Season.rollover(q, s1)
+	ok(rq == nil, "Wechsel mit 1 Pkt -> keine Belohnung")
+	ok(q.seasonPoints == 0 and q.seasonIndex == Season.indexFor(s1), "trotzdem Reset auf neue Saison")
+end
+
+print("== Season: View & Profil-Persistenz ==")
+do
+	local s0 = Season.EPOCH
+	-- view: eigene Punkte zaehlen nur in der aktuellen Saison.
+	local p = Profile.default(1, "P")
+	p.seasonIndex = Season.indexFor(s0)
+	p.seasonPoints = 42
+	local v = Season.view(p, s0)
+	ok(v.number == 1 and v.points == 42, "view: Nummer + eigene Punkte")
+	ok(v.secondsLeft == Season.LENGTH, "view: Restzeit am Saison-Start")
+	-- Punkte aus einer alten Saison zaehlen nicht (zeigt 0).
+	local vOld = Season.view(p, s0 + Season.LENGTH)
+	ok(vOld.points == 0, "view: Punkte alter Saison zaehlen nicht")
+	-- default + sanitize bewahren die Saison-Felder.
+	ok(Profile.default(9).seasonIndex == -1 and Profile.default(9).seasonPoints == 0, "default hat Saison-Felder")
+	local sp = Profile.sanitize({ seasonIndex = 5, seasonPoints = 77 }, 9, "P")
+	ok(sp.seasonIndex == 5 and sp.seasonPoints == 77, "sanitize bewahrt Saison-Felder")
+	-- Negative/ungueltige Punkte werden geklemmt; fehlende Felder -> Defaults.
+	local sp2 = Profile.sanitize({ seasonPoints = -10 }, 9, "P")
+	ok(sp2.seasonPoints == 0, "sanitize klemmt negative Punkte auf 0")
+	ok(sp2.seasonIndex == -1, "sanitize: fehlender Index -> -1")
 end
 
 -- ===================== Bot (KI-Gegner) =====================

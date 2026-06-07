@@ -12,6 +12,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Profile = require(Shared:WaitForChild("Profile"))
 local Quests = require(Shared:WaitForChild("Quests"))
+local Season = require(Shared:WaitForChild("Season"))
 
 local ProfileStore = {}
 
@@ -30,6 +31,8 @@ end
 local cache = {}
 -- Beim Laden vergebener Tagesbonus, bis ihn der Server an den Client meldet.
 local pendingBonus = {}
+-- Beim Saison-Wechsel gutgeschriebene Saison-Belohnung, bis sie der Server meldet.
+local pendingSeasonReward = {}
 
 local function keyOf(userId)
 	return "p_" .. tostring(userId)
@@ -47,6 +50,20 @@ local function retry(fn)
 		task.wait(0.2 * attempt)
 	end
 	return false, lastErr
+end
+
+-- Prueft auf Saison-Wechsel: ist eine neue Saison aktiv, wird die Belohnung fuer
+-- die abgelaufene Saison (sofern Punkte einen Rang erreichten) gutgeschrieben und
+-- zum Abholen abgelegt; die Punkte werden zurueckgesetzt. Write-through bei Belohnung
+-- (eine Belohnung darf nie verloren gehen). Erwartet ein bereits geladenes Profil.
+local function applySeasonRollover(userId, p)
+	local reward = Season.rollover(p)
+	if reward then
+		Profile.adjustWallet(p, reward.chips)
+		Profile.addXp(p, reward.xp)
+		pendingSeasonReward[userId] = reward
+		ProfileStore.save(userId)
+	end
 end
 
 -- Persistiert das gecachte Profil eines Spielers (UpdateAsync = mehrserver-sicher).
@@ -76,6 +93,8 @@ function ProfileStore.save(userId)
 					questDay = p.questDay,
 					questProgress = p.questProgress,
 					questClaimed = p.questClaimed,
+					seasonIndex = p.seasonIndex,
+					seasonPoints = p.seasonPoints,
 			}
 		end)
 	end)
@@ -91,6 +110,8 @@ function ProfileStore.load(userId, name)
 		if name and name ~= "" then
 			cache[userId].name = name
 		end
+		-- Saison-Wechsel waehrend der Sitzung abfangen (Belohnung + Reset).
+		applySeasonRollover(userId, cache[userId])
 		return cache[userId]
 	end
 	local raw = nil
@@ -107,6 +128,8 @@ function ProfileStore.load(userId, name)
 	local p = Profile.sanitize(raw, userId, name)
 	Profile.refillIfBroke(p)
 	cache[userId] = p
+	-- Saison-Sync: neue Saison seit dem letzten Login? Belohnung + Reset.
+	applySeasonRollover(userId, p)
 	-- Neues/aufgefuelltes Profil gleich sichern. (Der Tagesbonus wird separat
 	-- ueber grantDailyBonus vergeben — erst nachdem der VIP-Status feststeht,
 	-- damit der VIP-Multiplikator korrekt greift.)
@@ -225,6 +248,22 @@ function ProfileStore.claimQuest(userId, questId, name)
 		ProfileStore.save(userId)
 	end
 	return res, p
+end
+
+-- Meldet ein Saison-Ereignis (Metrik). Wie Hand-Gewinne haeufig -> nur Cache
+-- mutieren, NICHT bei jedem Event persistieren (schont DataStore-Limits; gesichert
+-- wird beim Match-Ende/Verlassen/Shutdown). load() synct vorher die Saison.
+function ProfileStore.recordSeasonEvent(userId, metric, name)
+	local p = ProfileStore.load(userId, name)
+	Season.addPoints(p, metric)
+	return p
+end
+
+-- Liefert (und verbraucht) die beim Saison-Wechsel gutgeschriebene Belohnung, oder nil.
+function ProfileStore.consumeSeasonReward(userId)
+	local r = pendingSeasonReward[userId]
+	pendingSeasonReward[userId] = nil
+	return r
 end
 
 -- Hand-Gewinne sind haeufig: nur den Cache mutieren, NICHT bei jeder Hand in den

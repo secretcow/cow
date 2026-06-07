@@ -27,9 +27,12 @@ local Bot = require(Shared:WaitForChild("Bot"))
 local Progression = require(Shared:WaitForChild("Progression"))
 local Monetization = require(Shared:WaitForChild("Monetization"))
 local Quests = require(Shared:WaitForChild("Quests"))
+local Season = require(Shared:WaitForChild("Season"))
 local MarketplaceService = game:GetService("MarketplaceService")
 -- ProfileStore liegt neben diesem Script (ServerScriptService.Server.ProfileStore).
 local ProfileStore = require(script.Parent:WaitForChild("ProfileStore"))
+-- SeasonStore (OrderedDataStore-Bestenliste) liegt ebenfalls neben diesem Script.
+local SeasonStore = require(script.Parent:WaitForChild("SeasonStore"))
 
 -- ---- Konstanten ----
 local ROOM_TTL = 120 -- Sek.: Raum lebt weiter, solange niemand verbunden ist
@@ -67,6 +70,7 @@ end
 local CreateRoomFn = mkFunction("CreateRoom")
 local JoinRoomFn = mkFunction("JoinRoom")
 local QuickPlayFn = mkFunction("QuickPlay")
+local RequestLeaderboardFn = mkFunction("RequestLeaderboard")
 local LeaveRoomEvent = mkEvent("LeaveRoom")
 local StartHandEvent = mkEvent("StartHand")
 local ActionEvent = mkEvent("Action")
@@ -201,6 +205,7 @@ end
 local function profileView(prof)
 	local v = Profile.publicView(prof)
 	v.quests = Quests.view(prof)
+	v.season = Season.view(prof) -- Nummer, Restzeit, eigene Saison-Punkte
 	return v
 end
 
@@ -212,6 +217,7 @@ local function lobbyPayload(player)
 		screen = "lobby",
 		profile = profileView(prof),
 		dailyBonus = ProfileStore.consumeDailyBonus(id), -- nil oder {granted,amount,streak}
+		seasonReward = ProfileStore.consumeSeasonReward(id), -- nil oder {tier,chips,xp,name}
 		tutorialDone = prof.tutorialDone == true, -- Einsteiger-Tutorial schon gesehen?
 	}
 end
@@ -252,7 +258,10 @@ local function pushProfiles(room)
 			if prof then
 				-- als zusaetzliches Lobby-Feld in der Tisch-Sicht waere unsauber;
 				-- wir senden eine eigene Lobby-Payload mit aktuellem Profil.
-				StateEvent:FireClient(plr, { screen = "profile", profile = profileView(prof) })
+				local payload = { screen = "profile", profile = profileView(prof) }
+				-- Falls waehrend der Sitzung ein Saison-Wechsel anfiel: Belohnung melden.
+				payload.seasonReward = ProfileStore.consumeSeasonReward(p.id)
+				StateEvent:FireClient(plr, payload)
 			end
 		end
 	end
@@ -286,8 +295,11 @@ local function recordResults(room)
 				ProfileStore.addXp(p.id, Progression.XP_HAND_WIN, false, p.name)
 				-- Tagesquests: Hand gewonnen (+ ggf. grosser Pot).
 				ProfileStore.recordQuestEvent(p.id, "handWin", 1, p.name)
+				-- Saison-Punkte: Hand gewonnen (+ ggf. grosser Pot).
+				ProfileStore.recordSeasonEvent(p.id, "handWin", p.name)
 				if pot >= Quests.BIG_POT then
 					ProfileStore.recordQuestEvent(p.id, "bigPot", 1, p.name)
+					ProfileStore.recordSeasonEvent(p.id, "bigPot", p.name)
 				end
 			end
 		end
@@ -312,6 +324,22 @@ local function recordResults(room)
 			ProfileStore.addXp(t.matchWinnerId, Progression.XP_MATCH_WIN, true, winnerName)
 			-- Tagesquests: Match gewonnen.
 			ProfileStore.recordQuestEvent(t.matchWinnerId, "matchWin", 1, winnerName)
+			-- Saison-Punkte: Match gewonnen.
+			ProfileStore.recordSeasonEvent(t.matchWinnerId, "matchWin", winnerName)
+		end
+		-- Saison-Bestenliste aktualisieren: aktuelle Punktestaende aller Menschen am
+		-- Tisch einreichen (nur beim Match-Ende — schont die OrderedDataStore-Limits).
+		-- SetAsync yieldet -> ausgelagert (fire-and-forget), blockiert recordResults nicht.
+		for _, pp in t.players do
+			if pp and not isBot(room, pp.id) then
+				local prof = ProfileStore.get(pp.id)
+				if prof then
+					local uid, nm, pts = pp.id, pp.name, prof.seasonPoints or 0
+					task.spawn(function()
+						SeasonStore.submit(uid, nm, pts)
+					end)
+				end
+			end
 		end
 		pushProfiles(room)
 	end
@@ -985,6 +1013,22 @@ ClaimQuestEvent.OnServerEvent:Connect(function(player, questId)
 	payload.questReward = { chips = res.chips, xp = res.xp }
 	StateEvent:FireClient(player, payload)
 end)
+
+-- ===================== Saison-Bestenliste =====================
+-- Liefert die globale Top-N der laufenden Saison + die eigenen Saison-Daten.
+-- Rein lesend (kein Schreiben) — die Punkte werden im Spiel verbucht.
+RequestLeaderboardFn.OnServerInvoke = function(player)
+	local id = idOf(player)
+	local prof = ProfileStore.get(id) or ProfileStore.load(id, player.Name)
+	local top = SeasonStore.top() -- gecacht (TTL) — yieldet ggf. einmalig
+	local sv = Season.view(prof)
+	return {
+		season = sv, -- { number, secondsLeft, points }
+		top = top, -- { {rank, userId, name, points} }
+		rewards = Season.REWARDS, -- Belohnungsstufen (Anzeige)
+		me = { userId = id, points = sv.points },
+	}
+end
 
 -- ===================== Monetarisierung =====================
 -- Reine Spass-Chips/Kosmetik, kein Echtgeldwert, keine Auszahlung, keine
