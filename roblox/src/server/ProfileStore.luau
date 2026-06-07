@@ -27,6 +27,8 @@ end
 
 -- Session-Cache: [userId] = profile. Autoritativ, solange der Spieler online ist.
 local cache = {}
+-- Beim Laden vergebener Tagesbonus, bis ihn der Server an den Client meldet.
+local pendingBonus = {}
 
 local function keyOf(userId)
 	return "p_" .. tostring(userId)
@@ -63,6 +65,8 @@ function ProfileStore.save(userId)
 				handsWon = p.handsWon,
 				biggestPot = p.biggestPot,
 				createdAt = p.createdAt,
+				lastDailyDay = p.lastDailyDay,
+				dailyStreak = p.dailyStreak,
 			}
 		end)
 	end)
@@ -94,9 +98,21 @@ function ProfileStore.load(userId, name)
 	local p = Profile.sanitize(raw, userId, name)
 	Profile.refillIfBroke(p)
 	cache[userId] = p
+	-- Taeglichen Login-Bonus pruefen (einmal pro frischer Sitzung/Tag).
+	local bonus = Profile.claimDailyBonus(p)
+	if bonus.granted then
+		pendingBonus[userId] = bonus
+	end
 	-- Neues/aufgefuelltes Profil gleich sichern.
 	ProfileStore.save(userId)
 	return p
+end
+
+-- Liefert (und verbraucht) den beim Laden vergebenen Tagesbonus, oder nil.
+function ProfileStore.consumeDailyBonus(userId)
+	local b = pendingBonus[userId]
+	pendingBonus[userId] = nil
+	return b
 end
 
 -- Liefert das gecachte Profil (muss vorher geladen sein) oder nil.
@@ -133,6 +149,7 @@ end
 function ProfileStore.release(userId)
 	ProfileStore.save(userId)
 	cache[userId] = nil
+	pendingBonus[userId] = nil
 end
 
 -- Beim Server-Shutdown alle offenen Profile sichern (BindToClose).

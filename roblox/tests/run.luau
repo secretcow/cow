@@ -490,6 +490,45 @@ do
 	ok(pub.userId == nil and pub.createdAt == nil, "publicView ohne interne Felder")
 end
 
+print("== Profile: taeglicher Login-Bonus ==")
+do
+	local DAY = 86400
+	local p = Profile.default(1, "X")
+	p.wallet = 1000
+
+	-- Tag 10: erster Bonus -> Basisbetrag, Streak 1.
+	local b1 = Profile.claimDailyBonus(p, 10 * DAY + 500)
+	ok(b1.granted and b1.streak == 1, "Bonus Tag 1 vergeben, Streak 1")
+	ok(b1.amount == Profile.DAILY_BASE, "Bonus Tag 1 = Basisbetrag")
+	ok(p.wallet == 1000 + Profile.DAILY_BASE, "Wallet um Bonus erhoeht")
+
+	-- Selber Tag erneut -> kein Bonus.
+	local b1b = Profile.claimDailyBonus(p, 10 * DAY + 9000)
+	ok(not b1b.granted and b1b.amount == 0, "kein zweiter Bonus am selben Tag")
+
+	-- Folgetag -> Streak 2, hoeherer Betrag.
+	local b2 = Profile.claimDailyBonus(p, 11 * DAY + 10)
+	ok(b2.granted and b2.streak == 2, "Folgetag: Streak 2")
+	ok(b2.amount == Profile.DAILY_BASE + Profile.DAILY_STEP, "Folgetag: Betrag +Step")
+
+	-- Luecke (Tag 20) -> Streak zurueck auf 1.
+	local b3 = Profile.claimDailyBonus(p, 20 * DAY)
+	ok(b3.granted and b3.streak == 1, "Luecke setzt Streak zurueck")
+
+	-- Streak-Deckel: viele aufeinanderfolgende Tage -> Betrag bei MAX_STREAK gedeckelt.
+	local q = Profile.default(2, "Y")
+	local last
+	for d = 0, Profile.DAILY_MAX_STREAK + 3 do
+		last = Profile.claimDailyBonus(q, (100 + d) * DAY)
+	end
+	local capAmount = Profile.DAILY_BASE + (Profile.DAILY_MAX_STREAK - 1) * Profile.DAILY_STEP
+	ok(last.amount == capAmount, "Bonus bei MAX_STREAK gedeckelt")
+
+	-- sanitize bewahrt die Bonus-Felder.
+	local s = Profile.sanitize({ lastDailyDay = 42, dailyStreak = 3 }, 5, "Z")
+	ok(s.lastDailyDay == 42 and s.dailyStreak == 3, "sanitize bewahrt Bonus-Felder")
+end
+
 print(string.format("\n%d bestanden, %d fehlgeschlagen", passed, failed))
 if failed > 0 then
 	for _, m in failures do

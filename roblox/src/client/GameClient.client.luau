@@ -398,6 +398,38 @@ lobbyError.TextColor3 = Color3.fromRGB(240, 120, 120)
 lobbyError.Text = ""
 lobbyError.Parent = lobbyScreen
 
+-- Tagesbonus-Toast (schwebt unten, blendet nach einigen Sekunden aus)
+local dailyToast = Instance.new("TextLabel")
+dailyToast.Size = UDim2.new(0, 480, 0, 44)
+dailyToast.Position = UDim2.new(0.5, -240, 1, -64)
+dailyToast.BackgroundColor3 = COL_GOLD
+dailyToast.TextColor3 = Color3.fromRGB(30, 26, 12)
+dailyToast.Font = Enum.Font.GothamBold
+dailyToast.TextSize = 18
+dailyToast.Text = ""
+dailyToast.Visible = false
+dailyToast.ZIndex = 50
+dailyToast.Parent = root
+mkCorner(dailyToast, 10)
+
+local toastGen = 0
+local function showDailyBonus(b)
+	if not (b and b.granted) then
+		return
+	end
+	dailyToast.Text = if lang == "de"
+		then `🎁 Täglicher Bonus: +{b.amount} 🪙   ·   Serie {b.streak} Tag(e)`
+		else `🎁 Daily bonus: +{b.amount} 🪙   ·   Streak {b.streak} day(s)`
+	dailyToast.Visible = true
+	toastGen += 1
+	local gen = toastGen
+	task.delay(6, function()
+		if toastGen == gen then
+			dailyToast.Visible = false
+		end
+	end)
+end
+
 -- =====================================================================
 -- =========================== TISCH-SCREEN ============================
 -- =====================================================================
@@ -777,6 +809,31 @@ local function clear(frame)
 	end
 end
 
+-- ---- Spieler-Avatare (Kopfbild) ----
+local avatarCache = {} -- [userId:number] = content-string
+local function loadAvatar(imgLabel, idStr)
+	local uid = tonumber(idStr)
+	if not uid then
+		return
+	end
+	if avatarCache[uid] then
+		imgLabel.Image = avatarCache[uid]
+		return
+	end
+	task.spawn(function()
+		local ok, content = pcall(function()
+			return Players:GetUserThumbnailAsync(uid, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size48x48)
+		end)
+		if ok and content then
+			avatarCache[uid] = content
+			-- Sitz koennte beim naechsten Render schon ersetzt sein -> Parent pruefen.
+			if imgLabel and imgLabel.Parent then
+				imgLabel.Image = content
+			end
+		end
+	end)
+end
+
 -- =====================================================================
 -- ============================ RENDERING ==============================
 -- =====================================================================
@@ -897,8 +954,19 @@ local function renderTable(view)
 			stroke.Thickness = 2
 			stroke.Parent = seat
 		end
+		-- Avatar (Kopfbild) oben rechts
+		local av = Instance.new("ImageLabel")
+		av.Size = UDim2.new(0, 30, 0, 30)
+		av.Position = UDim2.new(1, -34, 0, 3)
+		av.BackgroundColor3 = Color3.fromRGB(40, 46, 58)
+		av.BorderSizePixel = 0
+		av.Image = ""
+		av.Parent = seat
+		mkCorner(av, 15)
+		loadAvatar(av, p.id)
+
 		local nm = Instance.new("TextLabel")
-		nm.Size = UDim2.new(1, -8, 0, 18)
+		nm.Size = UDim2.new(1, -42, 0, 18)
 		nm.Position = UDim2.new(0, 4, 0, 2)
 		nm.BackgroundTransparency = 1
 		nm.Font = Enum.Font.GothamBold
@@ -1147,6 +1215,7 @@ StateEvent.OnClientEvent:Connect(function(view)
 		myProfile = view.profile or myProfile
 		showScreen("lobby")
 		renderLobby()
+		showDailyBonus(view.dailyBonus)
 	elseif view.screen == "profile" then
 		-- Profil-Update (z. B. nach Match-Ende) — Screen nicht wechseln.
 		renderProfile(view.profile)

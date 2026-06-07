@@ -160,6 +160,7 @@ local function lobbyPayload(player)
 	return {
 		screen = "lobby",
 		profile = Profile.publicView(prof),
+		dailyBonus = ProfileStore.consumeDailyBonus(id), -- nil oder {granted,amount,streak}
 	}
 end
 
