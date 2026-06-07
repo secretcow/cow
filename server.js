@@ -32,6 +32,35 @@ const io = new Server(httpServer, {
   },
 });
 
+// Letztes Sicherheitsnetz: Ein einzelner Bug (z. B. in der Engine, in einem
+// Timer-Callback oder einer vergessenen Promise) darf NIE den ganzen Prozess
+// killen – sonst fliegen ALLE Tische gleichzeitig raus ("Spiel abgestuerzt").
+// Stattdessen loggen und weiterlaufen; der betroffene Tisch erholt sich beim
+// naechsten Event oder wird per TTL aufgeraeumt.
+process.on('uncaughtException', (e) => {
+  console.error('[uncaughtException]', e?.stack || e?.message || e);
+});
+process.on('unhandledRejection', (e) => {
+  console.error('[unhandledRejection]', e?.stack || e?.message || e);
+});
+
+// Wrapper fuer Socket-Handler: faengt synchrone Fehler UND abgelehnte Promises
+// pro Event ab, damit der Fehler eines Spielers nicht die anderen am Tisch
+// (oder den ganzen Server) mitreisst.
+function guard(label, fn) {
+  return (...args) => {
+    try {
+      const r = fn(...args);
+      if (r && typeof r.then === 'function') {
+        r.catch((e) => console.error(`[handler:${label}]`, e?.stack || e?.message || e));
+      }
+      return r;
+    } catch (e) {
+      console.error(`[handler:${label}]`, e?.stack || e?.message || e);
+    }
+  };
+}
+
 // Health-Endpoint fuer Uptime-Checks / Keepalive.
 app.get('/healthz', (_req, res) =>
   res.json({ ok: true, rooms: rooms.size, uptime: Math.round(process.uptime()), store: storeInfo.backend })
@@ -241,7 +270,12 @@ function sendChatHistory(socket, room) {
 io.on('connection', (socket) => {
   socket.data.code = null;
 
-  socket.on('createRoom', async ({ name, token, maxPlayers, flush, startingStack, tournament, levelHands, cash }, cb) => {
+  // Registriert einen Spiel-Event-Handler, der pro Event abgesichert ist
+  // (siehe guard): wirft die Engine bei einem ungueltigen Zug o. ae., bleibt
+  // der Server stehen statt den Prozess zu beenden.
+  const onSafe = (ev, fn) => socket.on(ev, guard(ev, fn));
+
+  onSafe('createRoom', async ({ name, token, maxPlayers, flush, startingStack, tournament, levelHands, cash }, cb) => {
     if (!token) return cb?.({ error: 'Kein Spieler-Token.' });
     const code = makeCode();
     const isCash = !!cash;
@@ -276,7 +310,7 @@ io.on('connection', (socket) => {
     sendProfile(socket, token, cleanName(name));
   });
 
-  socket.on('joinRoom', async ({ code, name, token }, cb) => {
+  onSafe('joinRoom', async ({ code, name, token }, cb) => {
     code = (code || '').toUpperCase().trim();
     if (!token) return cb?.({ error: 'Kein Spieler-Token.' });
     const room = rooms.get(code);
@@ -330,11 +364,17 @@ io.on('connection', (socket) => {
     if (room.runoutTimer) return; // laeuft bereits
     const step = () => {
       room.runoutTimer = null;
-      if (!rooms.has(room.code) || !room.table) return;
-      const res = room.table.stepRunout();
-      broadcast(room);
-      if (!res.done) {
-        room.runoutTimer = setTimeout(step, RUNOUT_STEP_MS);
+      try {
+        if (!rooms.has(room.code) || !room.table) return;
+        const res = room.table.stepRunout();
+        broadcast(room);
+        if (!res.done) {
+          room.runoutTimer = setTimeout(step, RUNOUT_STEP_MS);
+        }
+      } catch (e) {
+        // Timer-Fehler wuerde sonst den Prozess killen: abfangen, Run-out
+        // stoppen (Timer ist schon genullt), Tisch bleibt am Leben.
+        console.error('[driveRunout]', e?.stack || e?.message || e);
       }
     };
     room.runoutTimer = setTimeout(step, RUNOUT_STEP_MS);
@@ -400,19 +440,24 @@ io.on('connection', (socket) => {
     room.autoActTimer = setTimeout(() => {
       room.autoActTimer = null;
       room.autoActFor = null;
-      if (!rooms.has(room.code) || !room.table) return;
-      const acted = autoActDisconnected(room);
-      if (acted) {
-        broadcast(room);
-        maybeDriveRunout(room);
+      try {
+        if (!rooms.has(room.code) || !room.table) return;
+        const acted = autoActDisconnected(room);
+        if (acted) {
+          broadcast(room);
+          maybeDriveRunout(room);
+        }
+        // Falls der naechste Spieler ebenfalls getrennt ist: erneut planen.
+        scheduleAutoAct(room);
+      } catch (e) {
+        // Auto-Act-Fehler nicht eskalieren lassen (wuerde sonst crashen).
+        console.error('[scheduleAutoAct]', e?.stack || e?.message || e);
       }
-      // Falls der naechste Spieler ebenfalls getrennt ist: erneut planen.
-      scheduleAutoAct(room);
     }, immediate ? 0 : DISCONNECT_GRACE_MS);
   }
 
   // Reconnect: derselbe Token kehrt zu seinem Sitzplatz zurueck.
-  socket.on('resume', ({ code, token }, cb) => {
+  onSafe('resume', ({ code, token }, cb) => {
     code = (code || '').toUpperCase().trim();
     const room = rooms.get(code);
     if (!room) return cb?.({ error: 'gone' });
@@ -431,7 +476,7 @@ io.on('connection', (socket) => {
     scheduleAutoAct(room);
   });
 
-  socket.on('startHand', () => {
+  onSafe('startHand', () => {
     const room = rooms.get(socket.data.code);
     if (!room) return;
     // Nur der Host darf das Spiel/eine neue Hand starten.
@@ -445,7 +490,7 @@ io.on('connection', (socket) => {
     scheduleAutoAct(room);
   });
 
-  socket.on('rematch', () => {
+  onSafe('rematch', () => {
     const room = rooms.get(socket.data.code);
     if (!room?.table) return;
     room.table.resetMatch();
@@ -455,7 +500,7 @@ io.on('connection', (socket) => {
   });
 
   // Cash-Game: Chips vom Wallet nachkaufen (zwischen den Haenden).
-  socket.on('rebuy', async ({ amount } = {}, cb) => {
+  onSafe('rebuy', async ({ amount } = {}, cb) => {
     const room = rooms.get(socket.data.code);
     if (!room?.table || !room.cash) return cb?.({ error: 'Kein Cash-Game.' });
     const seat = seatBySocket(room, socket.id);
@@ -475,7 +520,7 @@ io.on('connection', (socket) => {
     sendProfile(socket, seat.token, seat.name);
   });
 
-  socket.on('showCards', () => {
+  onSafe('showCards', () => {
     const room = rooms.get(socket.data.code);
     if (!room?.table) return;
     const seat = seatBySocket(room, socket.id);
@@ -485,7 +530,7 @@ io.on('connection', (socket) => {
     broadcast(room);
   });
 
-  socket.on('action', ({ type, amount }) => {
+  onSafe('action', ({ type, amount }) => {
     const room = rooms.get(socket.data.code);
     if (!room?.table) return;
     const seat = seatBySocket(room, socket.id);
@@ -498,7 +543,7 @@ io.on('connection', (socket) => {
   });
 
   // Tisch-Chat: kurze Nachrichten zwischen den Spielern am Tisch.
-  socket.on('chat', ({ text }) => {
+  onSafe('chat', ({ text }) => {
     const room = rooms.get(socket.data.code);
     if (!room) return;
     const seat = seatBySocket(room, socket.id);
@@ -512,7 +557,7 @@ io.on('connection', (socket) => {
   });
 
   // Tisch verlassen und zurueck zur Lobby.
-  socket.on('leaveRoom', () => {
+  onSafe('leaveRoom', () => {
     const room = rooms.get(socket.data.code);
     const code = socket.data.code;
     if (code) socket.leave(code);
