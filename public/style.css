@@ -268,9 +268,14 @@ input { font: inherit; }
 .community { display: flex; gap: 6px; min-height: 80px; }
 .stage-label { font-size: 0.85rem; color: #cfe7d8; letter-spacing: 2px; text-transform: uppercase; }
 .blind-info {
-  font-size: 0.78rem; font-weight: 700; color: #ffd86b;
-  background: rgba(0, 0, 0, 0.4); padding: 3px 12px; border-radius: 999px;
+  position: absolute; top: 12px; left: 14px;
+  z-index: 3; white-space: nowrap; text-align: left;
+  font-size: 0.74rem; font-weight: 700; color: #ffd86b;
+  background: rgba(0, 0, 0, 0.55); padding: 4px 12px; border-radius: 999px;
+  border: 1px solid rgba(255, 216, 107, 0.35);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
+.blind-info.hidden { display: none; }
 .result-banner { font-size: 1.1rem; font-weight: 800; padding: 8px 20px; border-radius: 10px; background: rgba(0, 0, 0, 0.6); text-align: center; }
 .result-banner.win { background: var(--win); color: #062a13; }
 .result-banner.lose { background: #7a2820; }

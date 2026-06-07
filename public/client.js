@@ -1236,6 +1236,10 @@ document.querySelectorAll('[data-quick]').forEach((b) => {
     const a = lastState.actions;
     if (!a) return;
     let v = a.minRaiseTo;
+    if (b.dataset.quick === '3bb') {
+      const bb = (lastState.blinds && lastState.blinds.bb) || 0;
+      v = clampRaise(3 * bb);
+    }
     if (b.dataset.quick === 'pot') v = Math.min(a.maxRaiseTo, Math.max(a.minRaiseTo, lastState.pot));
     if (b.dataset.quick === 'max') v = a.maxRaiseTo;
     $('raiseAmount').value = v;

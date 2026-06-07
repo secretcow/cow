@@ -140,12 +140,12 @@
       </aside>
 
       <div class="table">
+        <div class="blind-info hidden" id="blindInfo"></div>
         <div class="seats" id="seats"></div>
         <div class="center">
           <div class="pot" id="pot"></div>
           <div class="community" id="community"></div>
           <div class="stage-label" id="stageLabel"></div>
-          <div class="blind-info hidden" id="blindInfo"></div>
           <div class="result-banner hidden" id="resultBanner"></div>
           <div class="result-detail hidden" id="resultDetail"></div>
         </div>
@@ -164,6 +164,7 @@
           <div class="raise-row">
             <input type="number" id="raiseAmount" />
             <button class="btn small" data-quick="min" data-i18n="min"></button>
+            <button class="btn small" data-quick="3bb" id="quick3bb">3 BB</button>
             <button class="btn small" data-quick="pot" data-i18n="potBtn"></button>
             <button class="btn small" data-quick="max" data-i18n="allIn"></button>
           </div>
