@@ -41,6 +41,9 @@ function Profile.default(userId, name)
 		tableTheme = "default", -- ausgewaehltes Tisch-Thema (Kosmetik)
 		avatarFrame = "default", -- ausgewaehlter Avatar-Rahmen (Kosmetik)
 		vip = false, -- VIP-Pass-Besitz (Laufzeit; pro Sitzung aus dem Pass abgeleitet)
+		questDay = 0, -- Tagesindex, zu dem der Quest-Fortschritt gehoert
+		questProgress = {}, -- [questId] = Fortschritt (Zaehler)
+		questClaimed = {}, -- [questId] = true (Belohnung schon abgeholt)
 	}
 end
 
@@ -49,6 +52,23 @@ end
 function Profile.sanitize(raw, userId, name)
 	if type(raw) ~= "table" then
 		return Profile.default(userId, name)
+	end
+	-- Quest-Tabellen bereinigt aus dem Rohprofil uebernehmen (nur string-Keys).
+	local questProgress = {}
+	if type(raw.questProgress) == "table" then
+		for k, v in raw.questProgress do
+			if type(k) == "string" then
+				questProgress[k] = math.max(0, toInt(v, 0))
+			end
+		end
+	end
+	local questClaimed = {}
+	if type(raw.questClaimed) == "table" then
+		for k, v in raw.questClaimed do
+			if type(k) == "string" and v == true then
+				questClaimed[k] = true
+			end
+		end
 	end
 	local p = {
 		userId = tostring(userId or raw.userId or ""),
@@ -68,6 +88,9 @@ function Profile.sanitize(raw, userId, name)
 		-- VIP wird NICHT aus dem DataStore vertraut, sondern pro Sitzung aus dem
 		-- Game-Pass-Besitz neu abgeleitet (Server setzt es nach dem Laden).
 		vip = false,
+		questDay = math.max(0, toInt(raw.questDay, 0)),
+		questProgress = questProgress,
+		questClaimed = questClaimed,
 	}
 	if name and name ~= "" then
 		p.name = name

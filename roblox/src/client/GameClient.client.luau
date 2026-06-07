@@ -20,6 +20,7 @@ local Cards = require(Shared:WaitForChild("Cards"))
 local Strings = require(Shared:WaitForChild("Strings"))
 local Progression = require(Shared:WaitForChild("Progression"))
 local Monetization = require(Shared:WaitForChild("Monetization"))
+local Quests = require(Shared:WaitForChild("Quests"))
 
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local CreateRoomFn = Remotes:WaitForChild("CreateRoom")
@@ -33,6 +34,7 @@ local ChatEvent = Remotes:WaitForChild("Chat")
 local TutorialDoneEvent = Remotes:WaitForChild("TutorialDone")
 local EquipEvent = Remotes:WaitForChild("Equip")
 local RefreshVipEvent = Remotes:WaitForChild("RefreshVip")
+local ClaimQuestEvent = Remotes:WaitForChild("ClaimQuest")
 local StateEvent = Remotes:WaitForChild("State")
 
 local player = Players.LocalPlayer
@@ -380,6 +382,36 @@ shopBtn.Text = "🛒 Shop"
 shopBtn.Parent = lobbyScreen
 mkCorner(shopBtn, 10)
 
+-- "Quests" — taegliche Mini-Ziele mit Chip-/XP-Belohnung (Retention-Hebel).
+local questBtn = Instance.new("TextButton")
+questBtn.Size = UDim2.new(0, 96, 0, 40)
+questBtn.Position = UDim2.new(0.5, -312, 0, 98)
+questBtn.BackgroundColor3 = COL_ACCENT
+questBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+questBtn.Font = Enum.Font.GothamBold
+questBtn.TextSize = 15
+questBtn.Text = "🎯 Quests"
+questBtn.Parent = lobbyScreen
+mkCorner(questBtn, 10)
+
+-- Roter Hinweis-Punkt mit Anzahl abholbereiter Quests (oben rechts am Knopf).
+-- Als Kind von questBtn (kein eigener Top-Level-Local — Register sparen).
+do
+	local questBadge = Instance.new("TextLabel")
+	questBadge.Name = "QuestBadge"
+	questBadge.Size = UDim2.new(0, 20, 0, 20)
+	questBadge.Position = UDim2.new(1, -10, 0, -8)
+	questBadge.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+	questBadge.Font = Enum.Font.GothamBold
+	questBadge.TextSize = 12
+	questBadge.TextColor3 = Color3.fromRGB(255, 255, 255)
+	questBadge.Text = "0"
+	questBadge.Visible = false
+	questBadge.ZIndex = 5
+	questBadge.Parent = questBtn
+	mkCorner(questBadge, 10).CornerRadius = UDim.new(1, 0)
+end
+
 -- ---- Schnell spielen (Matchmaking) ----
 local quickBtn = Instance.new("TextButton")
 quickBtn.Size = UDim2.new(0, 860, 0, 56)
@@ -607,6 +639,14 @@ local function showPurchaseToast(chips)
 	showToast(if lang == "de"
 		then `✅ Kauf erfolgreich: +{chips} 🪙 gutgeschrieben`
 		else `✅ Purchase complete: +{chips} 🪙 added`)
+end
+
+-- Quest-Belohnung abgeholt — wiederverwendet den Toast.
+local function showQuestRewardToast(r)
+	local xpPart = if r.xp and r.xp > 0 then ` · +{r.xp} XP` else ""
+	showToast(if lang == "de"
+		then `🎯 Quest abgeschlossen: +{r.chips} 🪙{xpPart}`
+		else `🎯 Quest complete: +{r.chips} 🪙{xpPart}`)
 end
 
 -- =====================================================================
@@ -1031,8 +1071,13 @@ customizeBtn.Activated:Connect(showCosmetics)
 -- Chip-Pakete (Developer Products) + VIP (Game Pass). Reine Spass-Chips/
 -- Optik — kein Echtgeldwert, keine Auszahlung, keine Zufalls-Lootboxen.
 -- Nicht konfigurierte Eintraege (Asset-Id 0) werden ausgeblendet.
+-- In einen do-Block gekapselt (Register-Limit der Hauptfunktion schonen).
 
-local shopOverlay = Instance.new("Frame")
+local shopShown = false
+local renderShop
+local hideShop
+do
+	local shopOverlay = Instance.new("Frame")
 shopOverlay.Size = UDim2.new(1, 0, 1, 0)
 shopOverlay.BackgroundColor3 = Color3.fromRGB(6, 9, 14)
 shopOverlay.BackgroundTransparency = 0.25
@@ -1106,10 +1151,8 @@ shopLayout.Padding = UDim.new(0, 10)
 shopLayout.SortOrder = Enum.SortOrder.LayoutOrder
 shopLayout.Parent = shopList
 
-local shopShown = false
-
 -- Baut die Angebotsliste neu auf (nur konfigurierte Eintraege, VIP-Status).
-local function renderShop()
+function renderShop()
 	local prof = myProfile or {}
 	shopTitle.Text = if lang == "de" then "🛒 Shop" else "🛒 Shop"
 	shopHint.Text = if lang == "de"
@@ -1270,13 +1313,14 @@ local function showShop()
 	scaleIn(shopCard, 0.85, 0.2)
 end
 
-local function hideShop()
+function hideShop()
 	shopShown = false
 	shopOverlay.Visible = false
 end
 
 shopClose.Activated:Connect(hideShop)
 shopBtn.Activated:Connect(showShop)
+end -- do (Shop-Overlay)
 
 -- Nach einem VIP-Kauf den Pass-Status serverseitig neu pruefen lassen.
 MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, passId, purchased)
@@ -1286,6 +1330,234 @@ MarketplaceService.PromptGamePassPurchaseFinished:Connect(function(plr, passId, 
 		end)
 	end
 end)
+
+-- =====================================================================
+-- =========================== QUESTS (Overlay) ========================
+-- Taegliche Mini-Ziele mit Chip-/XP-Belohnung. Reine Spass-Chips/XP — kein
+-- Echtgeldwert, kein Gluecksspiel. Fortschritt kommt vom Server (im Profil).
+-- In einen do-Block gekapselt, damit die UI-Locals nicht das 200er-Register-
+-- Limit der Hauptfunktion sprengen (nur die noetigen Namen leben ausserhalb).
+
+local questsShown = false
+local renderQuests
+local hideQuests
+do
+	local questOverlay = Instance.new("Frame")
+questOverlay.Size = UDim2.new(1, 0, 1, 0)
+questOverlay.BackgroundColor3 = Color3.fromRGB(6, 9, 14)
+questOverlay.BackgroundTransparency = 0.25
+questOverlay.BorderSizePixel = 0
+questOverlay.Visible = false
+questOverlay.ZIndex = 100
+questOverlay.Parent = root
+
+local questCard = Instance.new("Frame")
+questCard.Size = UDim2.new(0, 560, 0, 470)
+questCard.Position = UDim2.new(0.5, -280, 0.5, -235)
+questCard.BackgroundColor3 = COL_DARK
+questCard.BorderSizePixel = 0
+questCard.ZIndex = 101
+questCard.Parent = questOverlay
+mkCorner(questCard, 16)
+local questStroke = Instance.new("UIStroke")
+questStroke.Color = COL_GOLD
+questStroke.Thickness = 2
+questStroke.Parent = questCard
+
+local questTitle = Instance.new("TextLabel")
+questTitle.Size = UDim2.new(1, -48, 0, 34)
+questTitle.Position = UDim2.new(0, 24, 0, 18)
+questTitle.BackgroundTransparency = 1
+questTitle.Font = Enum.Font.GothamBold
+questTitle.TextSize = 24
+questTitle.TextColor3 = COL_GOLD
+questTitle.TextXAlignment = Enum.TextXAlignment.Left
+questTitle.Text = "🎯 Tagesquests"
+questTitle.ZIndex = 102
+questTitle.Parent = questCard
+
+local questHint = Instance.new("TextLabel")
+questHint.Size = UDim2.new(1, -48, 0, 16)
+questHint.Position = UDim2.new(0, 24, 0, 50)
+questHint.BackgroundTransparency = 1
+questHint.Font = Enum.Font.Gotham
+questHint.TextSize = 12
+questHint.TextColor3 = Color3.fromRGB(150, 160, 175)
+questHint.TextXAlignment = Enum.TextXAlignment.Left
+questHint.Text = ""
+questHint.ZIndex = 102
+questHint.Parent = questCard
+
+local questClose = Instance.new("TextButton")
+questClose.Size = UDim2.new(0, 36, 0, 36)
+questClose.Position = UDim2.new(1, -44, 0, 14)
+questClose.BackgroundTransparency = 1
+questClose.Font = Enum.Font.GothamBold
+questClose.TextSize = 24
+questClose.TextColor3 = Color3.fromRGB(150, 160, 175)
+questClose.Text = "✕"
+questClose.ZIndex = 103
+questClose.Parent = questCard
+
+local questList = Instance.new("ScrollingFrame")
+questList.Size = UDim2.new(1, -32, 1, -92)
+questList.Position = UDim2.new(0, 16, 0, 76)
+questList.BackgroundTransparency = 1
+questList.BorderSizePixel = 0
+questList.ScrollBarThickness = 6
+questList.CanvasSize = UDim2.new(0, 0, 0, 0)
+questList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+questList.ZIndex = 102
+questList.Parent = questCard
+local questLayout = Instance.new("UIListLayout")
+questLayout.FillDirection = Enum.FillDirection.Vertical
+questLayout.Padding = UDim.new(0, 10)
+questLayout.SortOrder = Enum.SortOrder.LayoutOrder
+questLayout.Parent = questList
+
+-- Baut die Quest-Liste neu auf (Fortschrittsbalken + Abhol-Knopf je Quest).
+function renderQuests()
+	questTitle.Text = if lang == "de" then "🎯 Tagesquests" else "🎯 Daily quests"
+	questHint.Text = if lang == "de"
+		then "Jeden Tag neu · schliesse sie ab und hol dir die Belohnung"
+		else "New every day · complete them and claim your reward"
+	for _, ch in questList:GetChildren() do
+		if not ch:IsA("UIListLayout") then
+			ch:Destroy()
+		end
+	end
+	local quests = (myProfile and myProfile.quests) or {}
+	if #quests == 0 then
+		local note = Instance.new("TextLabel")
+		note.Size = UDim2.new(1, -16, 0, 60)
+		note.BackgroundTransparency = 1
+		note.Font = Enum.Font.Gotham
+		note.TextSize = 15
+		note.TextColor3 = Color3.fromRGB(170, 180, 195)
+		note.TextWrapped = true
+		note.LayoutOrder = 1
+		note.ZIndex = 103
+		note.Text = if lang == "de"
+			then "Heute keine Quests verfügbar. Schau morgen wieder rein! 🐄"
+			else "No quests available today. Come back tomorrow! 🐄"
+		note.Parent = questList
+		return
+	end
+	for i, q in quests do
+		local card = Instance.new("Frame")
+		card.Size = UDim2.new(1, -8, 0, 96)
+		card.BackgroundColor3 = Color3.fromRGB(38, 44, 56)
+		card.BorderSizePixel = 0
+		card.LayoutOrder = i
+		card.ZIndex = 102
+		card.Parent = questList
+		mkCorner(card, 12)
+
+		local nm = Instance.new("TextLabel")
+		nm.Size = UDim2.new(1, -170, 0, 22)
+		nm.Position = UDim2.new(0, 14, 0, 10)
+		nm.BackgroundTransparency = 1
+		nm.Font = Enum.Font.GothamBold
+		nm.TextSize = 16
+		nm.TextColor3 = COL_TEXT
+		nm.TextXAlignment = Enum.TextXAlignment.Left
+		nm.Text = if lang == "de" then q.name else q.nameEn
+		nm.ZIndex = 103
+		nm.Parent = card
+
+		local rew = Instance.new("TextLabel")
+		rew.Size = UDim2.new(1, -170, 0, 18)
+		rew.Position = UDim2.new(0, 14, 0, 32)
+		rew.BackgroundTransparency = 1
+		rew.Font = Enum.Font.GothamBold
+		rew.TextSize = 13
+		rew.TextColor3 = COL_GOLD
+		rew.TextXAlignment = Enum.TextXAlignment.Left
+		local xpPart = if q.xp and q.xp > 0 then ` · +{q.xp} XP` else ""
+		rew.Text = `+{q.chips} 🪙{xpPart}`
+		rew.ZIndex = 103
+		rew.Parent = card
+
+		-- Fortschrittsbalken.
+		local barBg = Instance.new("Frame")
+		barBg.Size = UDim2.new(1, -170, 0, 12)
+		barBg.Position = UDim2.new(0, 14, 0, 58)
+		barBg.BackgroundColor3 = Color3.fromRGB(18, 22, 30)
+		barBg.BorderSizePixel = 0
+		barBg.ZIndex = 103
+		barBg.Parent = card
+		mkCorner(barBg, 6)
+		local frac = math.clamp((q.progress or 0) / math.max(1, q.goal or 1), 0, 1)
+		local barFill = Instance.new("Frame")
+		barFill.Size = UDim2.new(frac, 0, 1, 0)
+		barFill.BackgroundColor3 = if q.done then Color3.fromRGB(80, 200, 120) else COL_ACCENT
+		barFill.BorderSizePixel = 0
+		barFill.ZIndex = 104
+		barFill.Parent = barBg
+		mkCorner(barFill, 6)
+		local barTxt = Instance.new("TextLabel")
+		barTxt.Size = UDim2.new(1, 0, 1, 0)
+		barTxt.BackgroundTransparency = 1
+		barTxt.Font = Enum.Font.GothamBold
+		barTxt.TextSize = 10
+		barTxt.TextColor3 = COL_TEXT
+		barTxt.Text = `{math.min(q.progress or 0, q.goal or 0)}/{q.goal or 0}`
+		barTxt.ZIndex = 105
+		barTxt.Parent = barBg
+
+		-- Abhol-Knopf (Zustaende: in Arbeit / abholbereit / abgeholt).
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(0, 134, 0, 40)
+		btn.Position = UDim2.new(1, -148, 0.5, -20)
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 15
+		btn.ZIndex = 103
+		btn.Parent = card
+		mkCorner(btn, 8)
+		if q.claimed then
+			btn.BackgroundColor3 = Color3.fromRGB(60, 70, 88)
+			btn.TextColor3 = COL_TEXT
+			btn.AutoButtonColor = false
+			btn.Text = if lang == "de" then "✓ Abgeholt" else "✓ Claimed"
+		elseif q.done then
+			btn.BackgroundColor3 = COL_GOLD
+			btn.TextColor3 = Color3.fromRGB(30, 26, 12)
+			btn.AutoButtonColor = true
+			btn.Text = if lang == "de" then "Abholen" else "Claim"
+			local questId = q.id
+			btn.Activated:Connect(function()
+				playSound("click")
+				-- optimistisch markieren; Server bestaetigt mit Belohnungs-Toast.
+				q.claimed = true
+				pcall(function()
+					ClaimQuestEvent:FireServer(questId)
+				end)
+				renderQuests()
+			end)
+		else
+			btn.BackgroundColor3 = Color3.fromRGB(44, 52, 66)
+			btn.TextColor3 = Color3.fromRGB(150, 160, 175)
+			btn.AutoButtonColor = false
+			btn.Text = if lang == "de" then "In Arbeit" else "In progress"
+		end
+	end
+end
+
+local function showQuests()
+	questsShown = true
+	renderQuests()
+	questOverlay.Visible = true
+	scaleIn(questCard, 0.85, 0.2)
+end
+
+function hideQuests()
+	questsShown = false
+	questOverlay.Visible = false
+end
+
+questClose.Activated:Connect(hideQuests)
+questBtn.Activated:Connect(showQuests)
+end -- do (Quest-Overlay)
 
 -- =====================================================================
 -- =========================== TISCH-SCREEN ============================
@@ -1714,6 +1986,9 @@ local function showScreen(name)
 		if shopShown then
 			hideShop()
 		end
+		if questsShown then
+			hideQuests()
+		end
 	end
 end
 
@@ -1740,6 +2015,18 @@ local function renderProfile(prof)
 		xpBarText.Text = if lang == "de" then "MAX" else "MAX"
 	else
 		xpBarText.Text = `{pr.xpInLevel} / {pr.xpToNext} XP`
+	end
+	-- Quest-Hinweis-Punkt: Anzahl abholbereiter Quests (fertig, nicht abgeholt).
+	local claimable = 0
+	for _, q in (prof.quests or {}) do
+		if q.done and not q.claimed then
+			claimable += 1
+		end
+	end
+	local questBadge = questBtn:FindFirstChild("QuestBadge")
+	if questBadge then
+		questBadge.Text = tostring(claimable)
+		questBadge.Visible = claimable > 0
 	end
 end
 
@@ -2173,6 +2460,9 @@ langBtn.Activated:Connect(function()
 	if shopShown then
 		renderShop()
 	end
+	if questsShown then
+		renderQuests()
+	end
 end)
 
 -- =====================================================================
@@ -2204,9 +2494,16 @@ StateEvent.OnClientEvent:Connect(function(view)
 		if shopShown then
 			renderShop()
 		end
+		if questsShown then
+			renderQuests()
+		end
 		-- Kauf-Bestaetigung (Chips), falls der Server eine meldet.
 		if view.purchase and view.purchase.chips then
 			showPurchaseToast(view.purchase.chips)
+		end
+		-- Quest-Belohnung abgeholt, falls der Server eine meldet.
+		if view.questReward and view.questReward.chips then
+			showQuestRewardToast(view.questReward)
 		end
 	else
 		-- Tisch-Sicht

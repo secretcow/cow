@@ -11,6 +11,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Profile = require(Shared:WaitForChild("Profile"))
+local Quests = require(Shared:WaitForChild("Quests"))
 
 local ProfileStore = {}
 
@@ -72,6 +73,9 @@ function ProfileStore.save(userId)
 					cardBack = p.cardBack,
 					tableTheme = p.tableTheme,
 					avatarFrame = p.avatarFrame,
+					questDay = p.questDay,
+					questProgress = p.questProgress,
+					questClaimed = p.questClaimed,
 			}
 		end)
 	end)
@@ -198,6 +202,29 @@ function ProfileStore.setCosmetic(userId, category, id, name)
 	Profile.setCosmetic(p, category, id)
 	ProfileStore.save(userId)
 	return p
+end
+
+-- Meldet ein Quest-Ereignis (Metrik). Wie Hand-Gewinne haeufig -> nur Cache
+-- mutieren, NICHT bei jedem Event persistieren (schont DataStore-Limits;
+-- gesichert wird ohnehin beim Match-Ende/Abholen/Verlassen). Gibt die Liste der
+-- dadurch gerade abgeschlossenen Quests zurueck.
+function ProfileStore.recordQuestEvent(userId, metric, amount, name)
+	local p = ProfileStore.load(userId, name)
+	return Quests.recordEvent(p, metric, amount)
+end
+
+-- Holt die Belohnung einer abgeschlossenen Quest ab. Schreibt Chips + XP gut und
+-- persistiert write-through (eine Belohnung darf nie verloren gehen). Gibt das
+-- Ergebnis (Quests.claim) und das aktualisierte Profil zurueck.
+function ProfileStore.claimQuest(userId, questId, name)
+	local p = ProfileStore.load(userId, name)
+	local res = Quests.claim(p, questId)
+	if res.ok then
+		Profile.adjustWallet(p, res.chips)
+		Profile.addXp(p, res.xp)
+		ProfileStore.save(userId)
+	end
+	return res, p
 end
 
 -- Hand-Gewinne sind haeufig: nur den Cache mutieren, NICHT bei jeder Hand in den

@@ -26,6 +26,7 @@ local Profile = require(Shared:WaitForChild("Profile"))
 local Bot = require(Shared:WaitForChild("Bot"))
 local Progression = require(Shared:WaitForChild("Progression"))
 local Monetization = require(Shared:WaitForChild("Monetization"))
+local Quests = require(Shared:WaitForChild("Quests"))
 local MarketplaceService = game:GetService("MarketplaceService")
 -- ProfileStore liegt neben diesem Script (ServerScriptService.Server.ProfileStore).
 local ProfileStore = require(script.Parent:WaitForChild("ProfileStore"))
@@ -74,6 +75,7 @@ local ChatEvent = mkEvent("Chat")
 local TutorialDoneEvent = mkEvent("TutorialDone")
 local EquipEvent = mkEvent("Equip")
 local RefreshVipEvent = mkEvent("RefreshVip")
+local ClaimQuestEvent = mkEvent("ClaimQuest")
 local StateEvent = mkEvent("State")
 
 -- ---- Zustand ----
@@ -194,13 +196,21 @@ local function tableView(room, id)
 	return v
 end
 
+-- Profil-Sicht fuer den Client: oeffentliche Felder + heutige Tagesquests.
+-- (Tisch-Sitze nutzen room.table:view + Anreicherung, NICHT diese Funktion.)
+local function profileView(prof)
+	local v = Profile.publicView(prof)
+	v.quests = Quests.view(prof)
+	return v
+end
+
 -- Lobby-Sicht (Spieler an keinem Tisch): nur Profil + Hinweis.
 local function lobbyPayload(player)
 	local id = idOf(player)
 	local prof = ProfileStore.get(id) or ProfileStore.load(id, player.Name)
 	return {
 		screen = "lobby",
-		profile = Profile.publicView(prof),
+		profile = profileView(prof),
 		dailyBonus = ProfileStore.consumeDailyBonus(id), -- nil oder {granted,amount,streak}
 		tutorialDone = prof.tutorialDone == true, -- Einsteiger-Tutorial schon gesehen?
 	}
@@ -242,7 +252,7 @@ local function pushProfiles(room)
 			if prof then
 				-- als zusaetzliches Lobby-Feld in der Tisch-Sicht waere unsauber;
 				-- wir senden eine eigene Lobby-Payload mit aktuellem Profil.
-				StateEvent:FireClient(plr, { screen = "profile", profile = Profile.publicView(prof) })
+				StateEvent:FireClient(plr, { screen = "profile", profile = profileView(prof) })
 			end
 		end
 	end
@@ -274,6 +284,17 @@ local function recordResults(room)
 				ProfileStore.recordHandWin(p.id, p.name, pot)
 				-- XP fuer den Hand-Gewinn (nur Cache; persistiert beim Match-Ende).
 				ProfileStore.addXp(p.id, Progression.XP_HAND_WIN, false, p.name)
+				-- Tagesquests: Hand gewonnen (+ ggf. grosser Pot).
+				ProfileStore.recordQuestEvent(p.id, "handWin", 1, p.name)
+				if pot >= Quests.BIG_POT then
+					ProfileStore.recordQuestEvent(p.id, "bigPot", 1, p.name)
+				end
+			end
+		end
+		-- Tagesquests: Teilnahme an dieser Hand (jeder menschliche Sitz).
+		for _, pp in t.players do
+			if pp and not isBot(room, pp.id) then
+				ProfileStore.recordQuestEvent(pp.id, "handPlayed", 1, pp.name)
 			end
 		end
 	end
@@ -289,6 +310,8 @@ local function recordResults(room)
 			ProfileStore.recordMatchWin(t.matchWinnerId, winnerName)
 			-- XP fuer den Match-Gewinn (write-through, da hier ohnehin gesichert wird).
 			ProfileStore.addXp(t.matchWinnerId, Progression.XP_MATCH_WIN, true, winnerName)
+			-- Tagesquests: Match gewonnen.
+			ProfileStore.recordQuestEvent(t.matchWinnerId, "matchWin", 1, winnerName)
 		end
 		pushProfiles(room)
 	end
@@ -935,13 +958,32 @@ EquipEvent.OnServerEvent:Connect(function(player, category, id)
 	end
 	ProfileStore.setCosmetic(pid, category, id, player.Name)
 	-- Aktualisiertes Profil zurueckmelden (Client uebernimmt die Auswahl sofort).
-	StateEvent:FireClient(player, { screen = "profile", profile = Profile.publicView(prof) })
+	StateEvent:FireClient(player, { screen = "profile", profile = profileView(prof) })
 	-- Falls am Tisch: neue Kosmetik allen Sitznachbarn zeigen.
 	local code = playerRoom[pid]
 	local room = code and rm:getRoom(code)
 	if room then
 		broadcastRoom(room)
 	end
+end)
+
+-- ===================== Tagesquests =====================
+-- Belohnung einer abgeschlossenen Tagesquest abholen. Serverseitig streng
+-- geprueft (fertig + nicht abgeholt) — kein Schummeln moeglich.
+ClaimQuestEvent.OnServerEvent:Connect(function(player, questId)
+	if type(questId) ~= "string" then
+		return
+	end
+	local id = idOf(player)
+	ProfileStore.load(id, player.Name)
+	local res, prof = ProfileStore.claimQuest(id, questId, player.Name)
+	if not (res and res.ok) then
+		return
+	end
+	local payload = profileView(prof)
+	payload.screen = "profile"
+	payload.questReward = { chips = res.chips, xp = res.xp }
+	StateEvent:FireClient(player, payload)
 end)
 
 -- ===================== Monetarisierung =====================
@@ -973,7 +1015,7 @@ MarketplaceService.ProcessReceipt = function(receiptInfo)
 	if prof then
 		StateEvent:FireClient(plr, {
 			screen = "profile",
-			profile = Profile.publicView(prof),
+			profile = profileView(prof),
 			purchase = { chips = chips },
 		})
 	end
@@ -986,7 +1028,7 @@ RefreshVipEvent.OnServerEvent:Connect(function(player)
 	local id = idOf(player)
 	local isVip = ownsVip(player.UserId)
 	local prof = ProfileStore.setVip(id, isVip, player.Name)
-	StateEvent:FireClient(player, { screen = "profile", profile = Profile.publicView(prof) })
+	StateEvent:FireClient(player, { screen = "profile", profile = profileView(prof) })
 	local code = playerRoom[id]
 	local room = code and rm:getRoom(code)
 	if room then

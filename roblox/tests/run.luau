@@ -12,6 +12,7 @@ local Profile = require("../src/shared/Profile")
 local Bot = require("../src/shared/Bot")
 local Progression = require("../src/shared/Progression")
 local Monetization = require("../src/shared/Monetization")
+local Quests = require("../src/shared/Quests")
 
 local passed = 0
 local failed = 0
@@ -691,6 +692,128 @@ do
 	-- sanitize bewahrt die Bonus-Felder.
 	local s = Profile.sanitize({ lastDailyDay = 42, dailyStreak = 3 }, 5, "Z")
 	ok(s.lastDailyDay == 42 and s.dailyStreak == 3, "sanitize bewahrt Bonus-Felder")
+end
+
+-- ===================== Quests (Tagesquests) =====================
+print("== Quests: taegliche Auswahl deterministisch ==")
+do
+	local DAY = 86400
+	-- Gleicher Tag -> gleiche Auswahl; pro Tag genau DAILY_COUNT.
+	local a = Quests.dailyFor(100 * DAY + 10)
+	local b = Quests.dailyFor(100 * DAY + 80000)
+	ok(#a == Quests.DAILY_COUNT, "DAILY_COUNT Quests pro Tag")
+	ok(#b == Quests.DAILY_COUNT, "auch spaeter am Tag DAILY_COUNT")
+	local sameIds = true
+	for i = 1, #a do
+		if a[i].id ~= b[i].id then
+			sameIds = false
+		end
+	end
+	ok(sameIds, "selber Tag -> identische Quest-Auswahl")
+	-- Alle gewaehlten Quests stammen aus dem Pool und haben Belohnung > 0.
+	local poolIds = {}
+	for _, def in Quests.POOL do
+		poolIds[def.id] = true
+	end
+	for _, q in a do
+		ok(poolIds[q.id] == true and q.chips > 0, "Quest aus Pool mit Chip-Belohnung: " .. q.id)
+	end
+	-- dayIndex monoton/korrekt.
+	ok(Quests.dayIndex(0) == 0 and Quests.dayIndex(DAY) == 1, "dayIndex rechnet UTC-Tage")
+end
+
+print("== Quests: Fortschritt, Tageswechsel & Abholen ==")
+do
+	local DAY = 86400
+	local now = 200 * DAY + 100
+	local p = Profile.default(1, "X")
+	-- Eine aktive Quest dieses Tages mit Ziel >= 2 herausgreifen (fuer Teil-
+	-- Fortschritt). Faellt notfalls auf die erste Quest zurueck.
+	local defs = Quests.dailyFor(now)
+	local target = defs[1]
+	for _, def in defs do
+		if def.goal >= 2 then
+			target = def
+			break
+		end
+	end
+
+	-- Fortschritt unter dem Ziel -> noch nicht abholbar.
+	Quests.recordEvent(p, target.metric, target.goal - 1, now)
+	local view1 = Quests.view(p, now)
+	local seen
+	for _, q in view1 do
+		if q.id == target.id then
+			seen = q
+		end
+	end
+	ok(seen ~= nil and seen.progress == target.goal - 1 and not seen.done, "Fortschritt unter Ziel: nicht fertig")
+
+	-- Abholen schlaegt fehl, solange unvollstaendig.
+	local pre = Quests.claim(p, target.id, now)
+	ok(pre.ok == false and pre.reason == "incomplete", "claim verweigert vor Abschluss")
+
+	-- Ein weiteres Ereignis schliesst die Quest ab (und meldet sie als 'gerade fertig').
+	local completed = Quests.recordEvent(p, target.metric, 5, now)
+	local reported = false
+	for _, def in completed do
+		if def.id == target.id then
+			reported = true
+		end
+	end
+	ok(reported, "recordEvent meldet gerade abgeschlossene Quest")
+	ok(Quests.claimableCount(p, now) >= 1, "mindestens eine Quest abholbereit")
+
+	-- Abholen liefert die Belohnung und markiert als abgeholt.
+	local res = Quests.claim(p, target.id, now)
+	ok(res.ok and res.chips == target.chips and res.xp == target.xp, "claim liefert Chip-/XP-Belohnung")
+	local again = Quests.claim(p, target.id, now)
+	ok(again.ok == false and again.reason == "claimed", "kein doppeltes Abholen")
+
+	-- Fortschritt deckelt aufs Ziel (keine Ueberzaehlung).
+	local viewDone
+	for _, q in Quests.view(p, now) do
+		if q.id == target.id then
+			viewDone = q
+		end
+	end
+	ok(viewDone.progress == target.goal and viewDone.claimed, "Fortschritt aufs Ziel gedeckelt + abgeholt")
+
+	-- Tageswechsel setzt Fortschritt + Abgeholt-Status zurueck.
+	local nextDay = now + DAY
+	Quests.ensureDay(p, nextDay)
+	ok(p.questDay == Quests.dayIndex(nextDay), "ensureDay aktualisiert questDay")
+	local viewNew = Quests.view(p, nextDay)
+	local anyProgress = false
+	for _, q in viewNew do
+		if q.progress > 0 or q.claimed then
+			anyProgress = true
+		end
+	end
+	ok(not anyProgress, "Tageswechsel: Fortschritt zurueckgesetzt")
+
+	-- Unbekannte Quest-id -> sauberes Fehlerergebnis.
+	ok(Quests.claim(p, "gibtsnicht", nextDay).ok == false, "claim unbekannte id -> ok=false")
+end
+
+print("== Quests: Persistenz ueber Profil (sanitize) ==")
+do
+	local now = 300 * 86400
+	local p = Profile.default(7, "P")
+	p.questDay = Quests.dayIndex(now)
+	p.questProgress = { win2hands = 1, junk = 3 }
+	p.questClaimed = { win2hands = true }
+	-- default enthaelt die Quest-Felder.
+	ok(type(p.questProgress) == "table" and type(p.questClaimed) == "table", "default hat Quest-Tabellen")
+	-- sanitize bewahrt die Quest-Felder (string-Keys, bereinigte Werte).
+	local s = Profile.sanitize({
+		questDay = 42,
+		questProgress = { win2hands = 2, [5] = 9 },
+		questClaimed = { win2hands = true, bogus = "x" },
+	}, 7, "P")
+	ok(s.questDay == 42, "sanitize bewahrt questDay")
+	ok(s.questProgress.win2hands == 2 and s.questProgress[5] == nil, "sanitize: nur string-Keys im Fortschritt")
+	ok(s.questClaimed.win2hands == true and s.questClaimed.bogus == nil, "sanitize: nur echte true-Claims")
 end
 
 -- ===================== Bot (KI-Gegner) =====================
