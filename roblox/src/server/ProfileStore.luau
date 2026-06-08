@@ -13,6 +13,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Profile = require(Shared:WaitForChild("Profile"))
 local Quests = require(Shared:WaitForChild("Quests"))
 local Season = require(Shared:WaitForChild("Season"))
+local Friends = require(Shared:WaitForChild("Friends"))
 
 local ProfileStore = {}
 
@@ -33,6 +34,13 @@ local cache = {}
 local pendingBonus = {}
 -- Beim Saison-Wechsel gutgeschriebene Saison-Belohnung, bis sie der Server meldet.
 local pendingSeasonReward = {}
+-- Beim Beitritt ueber eine Einladung vergebene Freundes-Belohnung (Willkommensbonus
+-- fuer den Eingeladenen), bis sie der Server an den Client meldet.
+local pendingFriendReward = {}
+-- UserIds, deren Profil in DIESER Sitzung frisch angelegt wurde (kein DataStore-Eintrag
+-- vorhanden). Nur frische Profile duerfen ueber eine Einladung geworben werden — das
+-- verhindert das Farmen alter Konten. Wird beim ersten Abruf verbraucht.
+local justCreated = {}
 
 local function keyOf(userId)
 	return "p_" .. tostring(userId)
@@ -95,6 +103,8 @@ function ProfileStore.save(userId)
 					questClaimed = p.questClaimed,
 					seasonIndex = p.seasonIndex,
 					seasonPoints = p.seasonPoints,
+					referredBy = p.referredBy,
+					invitesAccepted = p.invitesAccepted,
 			}
 		end)
 	end)
@@ -124,6 +134,11 @@ function ProfileStore.load(userId, name)
 		else
 			warn("[ProfileStore] load fehlgeschlagen fuer " .. tostring(userId) .. ", nutze Default.")
 		end
+	end
+	-- Kein DataStore-Rohprofil gefunden -> Spieler ist neu (oder erstmals seit
+	-- DataStore-Verfuegbarkeit). Als "frisch angelegt" markieren (Werbe-Berechtigung).
+	if raw == nil then
+		justCreated[userId] = true
 	end
 	local p = Profile.sanitize(raw, userId, name)
 	Profile.refillIfBroke(p)
@@ -264,6 +279,68 @@ function ProfileStore.consumeSeasonReward(userId)
 	local r = pendingSeasonReward[userId]
 	pendingSeasonReward[userId] = nil
 	return r
+end
+
+-- War das Profil dieses Spielers in DIESER Sitzung frisch angelegt? Verbraucht das
+-- Flag beim ersten Abruf (sodass eine Einladung nur einmal, beim allerersten Beitritt
+-- des neuen Spielers, greifen kann).
+function ProfileStore.consumeJustCreated(userId)
+	local v = justCreated[userId] == true
+	justCreated[userId] = nil
+	return v
+end
+
+-- Liefert (und verbraucht) den beim Beitritt ueber eine Einladung vergebenen
+-- Willkommensbonus des Eingeladenen, oder nil.
+function ProfileStore.consumeFriendReward(userId)
+	local r = pendingFriendReward[userId]
+	pendingFriendReward[userId] = nil
+	return r
+end
+
+-- Schreibt dem (moeglicherweise OFFLINE) Einladenden die Empfehlungs-Belohnung gut.
+-- Laedt dessen Profil bei Bedarf, mutiert, persistiert write-through und gibt das
+-- Profil wieder frei, falls es nur fuer diese Gutschrift geladen wurde. Gibt das
+-- Ergebnis von Friends.recordSuccess zurueck (count + rewarded).
+local function creditInviter(inviterId)
+	local wasOnline = cache[inviterId] ~= nil
+	local p = ProfileStore.load(inviterId)
+	local res = Friends.recordSuccess(p)
+	if res.rewarded then
+		Profile.adjustWallet(p, res.chips)
+		Profile.addXp(p, res.xp)
+	end
+	ProfileStore.save(inviterId)
+	-- Nur fuer die Gutschrift geladen? Wieder freigeben (Cache schlank halten).
+	if not wasOnline then
+		cache[inviterId] = nil
+	end
+	return res
+end
+
+-- Wendet eine Einladung an: der Eingeladene (`userId`) wurde von `inviterId` geworben.
+-- Nur gueltig, wenn das Profil frisch angelegt wurde (kein Farmen alter Konten) und
+-- noch nie geworben wurde. Schreibt dem Eingeladenen den Willkommensbonus gut (zum
+-- Abholen abgelegt) und dem Einladenden die Empfehlungs-Belohnung. Gibt true zurueck,
+-- wenn die Werbung gegriffen hat, sonst false.
+function ProfileStore.applyReferral(userId, inviterId, name)
+	-- Nur frisch angelegte Profile sind werbe-berechtigt.
+	if not ProfileStore.consumeJustCreated(userId) then
+		return false
+	end
+	local p = ProfileStore.load(userId, name)
+	local reward = Friends.markReferred(p, inviterId, userId)
+	if not reward then
+		return false
+	end
+	-- Willkommensbonus dem Eingeladenen gutschreiben + zum Abholen ablegen.
+	Profile.adjustWallet(p, reward.chips)
+	Profile.addXp(p, reward.xp)
+	pendingFriendReward[userId] = reward
+	ProfileStore.save(userId)
+	-- Empfehlungs-Belohnung dem Einladenden gutschreiben (evtl. offline).
+	creditInviter(tonumber(inviterId) and tostring(math.floor(tonumber(inviterId))) or inviterId)
+	return true
 end
 
 -- Hand-Gewinne sind haeufig: nur den Cache mutieren, NICHT bei jeder Hand in den

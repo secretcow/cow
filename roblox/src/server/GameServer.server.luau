@@ -28,6 +28,7 @@ local Progression = require(Shared:WaitForChild("Progression"))
 local Monetization = require(Shared:WaitForChild("Monetization"))
 local Quests = require(Shared:WaitForChild("Quests"))
 local Season = require(Shared:WaitForChild("Season"))
+local Friends = require(Shared:WaitForChild("Friends"))
 local MarketplaceService = game:GetService("MarketplaceService")
 -- ProfileStore liegt neben diesem Script (ServerScriptService.Server.ProfileStore).
 local ProfileStore = require(script.Parent:WaitForChild("ProfileStore"))
@@ -206,6 +207,7 @@ local function profileView(prof)
 	local v = Profile.publicView(prof)
 	v.quests = Quests.view(prof)
 	v.season = Season.view(prof) -- Nummer, Restzeit, eigene Saison-Punkte
+	v.friends = Friends.view(prof) -- geworbene Freunde + ob selbst geworben
 	return v
 end
 
@@ -218,6 +220,7 @@ local function lobbyPayload(player)
 		profile = profileView(prof),
 		dailyBonus = ProfileStore.consumeDailyBonus(id), -- nil oder {granted,amount,streak}
 		seasonReward = ProfileStore.consumeSeasonReward(id), -- nil oder {tier,chips,xp,name}
+		friendReward = ProfileStore.consumeFriendReward(id), -- nil oder {chips,xp} (Willkommensbonus)
 		tutorialDone = prof.tutorialDone == true, -- Einsteiger-Tutorial schon gesehen?
 	}
 end
@@ -1082,9 +1085,37 @@ end)
 
 -- ===================== Spieler-Ereignisse =====================
 
+-- Liest die Einladungs-LaunchData ("ref:<inviterUserId>") eines beitretenden
+-- Spielers und gibt die Inviter-UserId als String zurueck, oder nil. Robust gegen
+-- fehlende/ungueltige Daten und Selbstwerbung.
+local function readReferralInviter(player, selfId)
+	local okJoin, joinData = pcall(function()
+		return player:GetJoinData()
+	end)
+	if not okJoin or type(joinData) ~= "table" then
+		return nil
+	end
+	local launch = joinData.LaunchData
+	if type(launch) ~= "string" then
+		return nil
+	end
+	local inviter = string.match(launch, "^ref:(%d+)$")
+	if not inviter or inviter == tostring(selfId) then
+		return nil
+	end
+	return inviter
+end
+
 Players.PlayerAdded:Connect(function(player)
 	local id = idOf(player)
 	ProfileStore.load(id, player.Name)
+	-- Einladung auswerten: kam der Spieler ueber den Invite-Link eines Freundes und
+	-- ist sein Profil frisch angelegt, werden BEIDE belohnt (Anti-Farming in
+	-- ProfileStore.applyReferral: nur frische, nie zuvor geworbene Profile).
+	local inviterId = readReferralInviter(player, player.UserId)
+	if inviterId then
+		ProfileStore.applyReferral(id, inviterId, player.Name)
+	end
 	-- VIP-Status (Game-Pass) bestimmen, dann Tagesbonus vergeben (VIP x2).
 	local isVip = ownsVip(player.UserId)
 	ProfileStore.setVip(id, isVip, player.Name)

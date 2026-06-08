@@ -415,7 +415,7 @@ end
 -- ---- Schnell spielen (Matchmaking) ----
 local quickBtn = Instance.new("TextButton")
 quickBtn.Size = UDim2.new(0, 860, 0, 56)
-quickBtn.Position = UDim2.new(0.5, -430, 0, 140)
+quickBtn.Position = UDim2.new(0.5, -430, 0, 196)
 quickBtn.BackgroundColor3 = COL_GOLD
 quickBtn.TextColor3 = Color3.fromRGB(30, 26, 12)
 quickBtn.Font = Enum.Font.GothamBold
@@ -427,7 +427,7 @@ mkCorner(quickBtn, 12)
 -- ---- Tisch erstellen ----
 local createCard = Instance.new("Frame")
 createCard.Size = UDim2.new(0, 420, 0, 260)
-createCard.Position = UDim2.new(0.5, -430, 0, 212)
+createCard.Position = UDim2.new(0.5, -430, 0, 268)
 createCard.BackgroundColor3 = COL_DARK
 createCard.BorderSizePixel = 0
 createCard.Parent = lobbyScreen
@@ -535,7 +535,7 @@ mkCorner(createBtn, 8)
 -- ---- Tisch beitreten ----
 local joinCard = Instance.new("Frame")
 joinCard.Size = UDim2.new(0, 420, 0, 200)
-joinCard.Position = UDim2.new(0.5, 10, 0, 212)
+joinCard.Position = UDim2.new(0.5, 10, 0, 268)
 joinCard.BackgroundColor3 = COL_DARK
 joinCard.BorderSizePixel = 0
 joinCard.Parent = lobbyScreen
@@ -589,7 +589,7 @@ mkCorner(joinBtn, 8)
 
 local lobbyError = Instance.new("TextLabel")
 lobbyError.Size = UDim2.new(0, 860, 0, 24)
-lobbyError.Position = UDim2.new(0.5, -430, 0, 482)
+lobbyError.Position = UDim2.new(0.5, -430, 0, 538)
 lobbyError.BackgroundTransparency = 1
 lobbyError.Font = Enum.Font.GothamBold
 lobbyError.TextSize = 15
@@ -1863,6 +1863,216 @@ do
 end -- do (Saison-Overlay)
 
 -- =====================================================================
+-- ============================ FREUNDE ===============================
+-- =====================================================================
+-- Viraler Wachstums-Hebel: Spieler laden Freunde ein. Tritt ein NEUER Spieler
+-- ueber die Einladung bei, bekommen BEIDE Spass-Chips/XP. Die Anbindung an Roblox
+-- (SocialService-Einladung) liegt hier im Client; die Belohnungs-Gutschrift im
+-- Server (ueber LaunchData "ref:<UserId>"). In ein do...end gekapselt, um
+-- Top-Level-Register zu sparen — Steuerung gebuendelt in EINER Tabelle:
+--   friendsOv.shown — sichtbar?  friendsOv.render()/hide() — von aussen aufgerufen.
+local friendsOv = { shown = false }
+do
+	local SocialService = game:GetService("SocialService")
+	local localPlayer = Players.LocalPlayer
+
+	-- "Freunde" — Einladungen + Empfehlungs-Belohnungen.
+	local friendsBtn = Instance.new("TextButton")
+	friendsBtn.Size = UDim2.new(0, 96, 0, 40)
+	friendsBtn.Position = UDim2.new(0.5, -312, 0, 146)
+	friendsBtn.BackgroundColor3 = Color3.fromRGB(60, 160, 110)
+	friendsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	friendsBtn.Font = Enum.Font.GothamBold
+	friendsBtn.TextSize = 15
+	friendsBtn.Text = "👥 Freunde"
+	friendsBtn.Parent = lobbyScreen
+	mkCorner(friendsBtn, 10)
+
+	local friendsOverlay = Instance.new("Frame")
+	friendsOverlay.Size = UDim2.new(1, 0, 1, 0)
+	friendsOverlay.BackgroundColor3 = Color3.fromRGB(6, 9, 14)
+	friendsOverlay.BackgroundTransparency = 0.25
+	friendsOverlay.BorderSizePixel = 0
+	friendsOverlay.Visible = false
+	friendsOverlay.ZIndex = 100
+	friendsOverlay.Parent = root
+
+	local friendsCard = Instance.new("Frame")
+	friendsCard.Size = UDim2.new(0, 460, 0, 420)
+	friendsCard.Position = UDim2.new(0.5, -230, 0.5, -210)
+	friendsCard.BackgroundColor3 = COL_DARK
+	friendsCard.BorderSizePixel = 0
+	friendsCard.ZIndex = 101
+	friendsCard.Parent = friendsOverlay
+	mkCorner(friendsCard, 16)
+	local friendsStroke = Instance.new("UIStroke")
+	friendsStroke.Color = Color3.fromRGB(90, 200, 140)
+	friendsStroke.Thickness = 2
+	friendsStroke.Parent = friendsCard
+
+	local friendsTitle = Instance.new("TextLabel")
+	friendsTitle.Size = UDim2.new(1, -48, 0, 30)
+	friendsTitle.Position = UDim2.new(0, 24, 0, 16)
+	friendsTitle.BackgroundTransparency = 1
+	friendsTitle.Font = Enum.Font.GothamBold
+	friendsTitle.TextSize = 23
+	friendsTitle.TextColor3 = Color3.fromRGB(150, 230, 185)
+	friendsTitle.TextXAlignment = Enum.TextXAlignment.Left
+	friendsTitle.Text = "👥 Freunde einladen"
+	friendsTitle.ZIndex = 102
+	friendsTitle.Parent = friendsCard
+
+	local friendsClose = Instance.new("TextButton")
+	friendsClose.Size = UDim2.new(0, 36, 0, 36)
+	friendsClose.Position = UDim2.new(1, -44, 0, 14)
+	friendsClose.BackgroundTransparency = 1
+	friendsClose.Font = Enum.Font.GothamBold
+	friendsClose.TextSize = 24
+	friendsClose.TextColor3 = Color3.fromRGB(150, 160, 175)
+	friendsClose.Text = "✕"
+	friendsClose.ZIndex = 103
+	friendsClose.Parent = friendsCard
+
+	-- Erklaertext: was bringt das Einladen?
+	local friendsBlurb = Instance.new("TextLabel")
+	friendsBlurb.Size = UDim2.new(1, -48, 0, 96)
+	friendsBlurb.Position = UDim2.new(0, 24, 0, 58)
+	friendsBlurb.BackgroundTransparency = 1
+	friendsBlurb.Font = Enum.Font.Gotham
+	friendsBlurb.TextSize = 15
+	friendsBlurb.TextColor3 = Color3.fromRGB(200, 210, 220)
+	friendsBlurb.TextXAlignment = Enum.TextXAlignment.Left
+	friendsBlurb.TextYAlignment = Enum.TextYAlignment.Top
+	friendsBlurb.TextWrapped = true
+	friendsBlurb.Text = ""
+	friendsBlurb.ZIndex = 102
+	friendsBlurb.Parent = friendsCard
+
+	-- Fortschritt: Anzahl geworbener Freunde.
+	local friendsCount = Instance.new("TextLabel")
+	friendsCount.Size = UDim2.new(1, -48, 0, 28)
+	friendsCount.Position = UDim2.new(0, 24, 0, 168)
+	friendsCount.BackgroundTransparency = 1
+	friendsCount.Font = Enum.Font.GothamBold
+	friendsCount.TextSize = 18
+	friendsCount.TextColor3 = COL_GOLD
+	friendsCount.TextXAlignment = Enum.TextXAlignment.Left
+	friendsCount.Text = ""
+	friendsCount.ZIndex = 102
+	friendsCount.Parent = friendsCard
+
+	-- Hinweis fuer bereits Geworbene / Status.
+	local friendsNote = Instance.new("TextLabel")
+	friendsNote.Size = UDim2.new(1, -48, 0, 40)
+	friendsNote.Position = UDim2.new(0, 24, 0, 200)
+	friendsNote.BackgroundTransparency = 1
+	friendsNote.Font = Enum.Font.Gotham
+	friendsNote.TextSize = 13
+	friendsNote.TextColor3 = Color3.fromRGB(150, 160, 175)
+	friendsNote.TextXAlignment = Enum.TextXAlignment.Left
+	friendsNote.TextYAlignment = Enum.TextYAlignment.Top
+	friendsNote.TextWrapped = true
+	friendsNote.Text = ""
+	friendsNote.ZIndex = 102
+	friendsNote.Parent = friendsCard
+
+	-- Einladen-Button (oeffnet den Roblox-Einladungsdialog mit Ref-LaunchData).
+	local inviteBtn = Instance.new("TextButton")
+	inviteBtn.Size = UDim2.new(1, -48, 0, 52)
+	inviteBtn.Position = UDim2.new(0, 24, 1, -76)
+	inviteBtn.BackgroundColor3 = Color3.fromRGB(60, 170, 115)
+	inviteBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	inviteBtn.Font = Enum.Font.GothamBold
+	inviteBtn.TextSize = 18
+	inviteBtn.Text = "👥 Freunde einladen"
+	inviteBtn.ZIndex = 103
+	inviteBtn.Parent = friendsCard
+	mkCorner(inviteBtn, 10)
+
+	-- Oeffnet den Roblox-Einladungsdialog. Die LaunchData traegt die eigene UserId
+	-- als Empfehlungs-Kennung ("ref:<UserId>"), die der Server beim Beitritt des
+	-- Eingeladenen ausliest und beiden Seiten die Belohnung gutschreibt.
+	local function promptInvite()
+		local canInvite = false
+		local okCan = pcall(function()
+			canInvite = SocialService:CanSendGameInviteAsync(localPlayer)
+		end)
+		if not (okCan and canInvite) then
+			showToast(if lang == "de"
+				then "Einladungen sind hier gerade nicht verfuegbar."
+				else "Invites are not available right now.")
+			return
+		end
+		local sent = pcall(function()
+			local options = Instance.new("ExperienceInviteOptions")
+			options.PromptMessage = if lang == "de"
+				then "Spiel KuhPoker mit mir – ihr bekommt beide Gratis-Chips! 🐄🪙"
+				else "Play KuhPoker with me – you both get free chips! 🐄🪙"
+			options.LaunchData = "ref:" .. tostring(localPlayer.UserId)
+			SocialService:PromptGameInvite(localPlayer, options)
+		end)
+		if not sent then
+			-- Aelteres API ohne ExperienceInviteOptions: einfacher Aufruf als Fallback.
+			pcall(function()
+				SocialService:PromptGameInvite(localPlayer)
+			end)
+		end
+	end
+
+	-- Baut den Freundes-Inhalt aus dem aktuellen Profil neu auf.
+	local function renderFriends()
+		local fr = (myProfile and myProfile.friends) or { invitesAccepted = 0, wasReferred = false }
+		local n = fr.invitesAccepted or 0
+		friendsBlurb.Text = if lang == "de"
+			then "Lade Freunde ein! Tritt ein neuer Spieler über deine Einladung bei, bekommt ihr BEIDE Gratis-Chips & XP — reiner Spaß, kein Echtgeld.\n\n• Du bekommst pro neuem Freund Chips + XP.\n• Dein Freund bekommt einen Willkommensbonus."
+			else "Invite friends! When a new player joins via your invite, you BOTH get free chips & XP — just for fun, no real money.\n\n• You earn chips + XP per new friend.\n• Your friend gets a welcome bonus."
+		friendsCount.Text = if lang == "de"
+			then `🎉 Geworbene Freunde: {n}`
+			else `🎉 Friends referred: {n}`
+		if fr.wasReferred then
+			friendsNote.Text = if lang == "de"
+				then "Du bist selbst über eine Einladung beigetreten — danke! 💚"
+				else "You joined via an invite yourself — thanks! 💚"
+		else
+			friendsNote.Text = if lang == "de"
+				then "Tipp: Je mehr Freunde mitspielen, desto mehr Spaß (und Chips)!"
+				else "Tip: the more friends play, the more fun (and chips)!"
+		end
+	end
+
+	local function showFriends()
+		friendsOv.shown = true
+		renderFriends()
+		friendsOverlay.Visible = true
+		scaleIn(friendsCard, 0.85, 0.2)
+	end
+
+	local function hideFriends()
+		friendsOv.shown = false
+		friendsOverlay.Visible = false
+	end
+
+	-- Willkommensbonus-Toast fuer einen ueber eine Einladung beigetretenen Spieler.
+	local function friendRewardToast(r)
+		if not (r and r.chips) then
+			return
+		end
+		local xpPart = if r.xp and r.xp > 0 then ` · +{r.xp} XP` else ""
+		showToast(if lang == "de"
+			then `👥 Willkommensbonus (per Einladung): +{r.chips} 🪙{xpPart}`
+			else `👥 Welcome bonus (via invite): +{r.chips} 🪙{xpPart}`)
+	end
+
+	friendsClose.Activated:Connect(hideFriends)
+	friendsBtn.Activated:Connect(showFriends)
+	inviteBtn.Activated:Connect(promptInvite)
+	-- Nach aussen reichen (showScreen/langBtn/Profil-Update): render/hide/toast.
+	friendsOv.render = renderFriends
+	friendsOv.hide = hideFriends
+	friendsOv.toast = friendRewardToast
+end -- do (Freunde-Overlay)
+
+-- =====================================================================
 -- =========================== TISCH-SCREEN ============================
 -- =====================================================================
 local tableScreen = Instance.new("Frame")
@@ -2294,6 +2504,9 @@ local function showScreen(name)
 		end
 		if seasonOv.shown then
 			seasonOv.hide()
+		end
+		if friendsOv.shown then
+			friendsOv.hide()
 		end
 	end
 end
@@ -2772,6 +2985,9 @@ langBtn.Activated:Connect(function()
 	if seasonOv.shown then
 		seasonOv.render()
 	end
+	if friendsOv.shown then
+		friendsOv.render()
+	end
 end)
 
 -- =====================================================================
@@ -2788,6 +3004,8 @@ StateEvent.OnClientEvent:Connect(function(view)
 		showDailyBonus(view.dailyBonus)
 		-- Saison-Belohnung (beim Saison-Wechsel gutgeschrieben), falls gemeldet.
 		showSeasonRewardToast(view.seasonReward)
+		-- Willkommensbonus, falls der Spieler ueber eine Einladung beigetreten ist.
+		friendsOv.toast(view.friendReward)
 		-- Einsteiger-Tutorial beim allerersten Login automatisch zeigen.
 		if view.tutorialDone == false and not tutorialShownThisSession then
 			tutorialShownThisSession = true
@@ -2807,6 +3025,9 @@ StateEvent.OnClientEvent:Connect(function(view)
 		end
 		if questsShown then
 			renderQuests()
+		end
+		if friendsOv.shown then
+			friendsOv.render()
 		end
 		-- Kauf-Bestaetigung (Chips), falls der Server eine meldet.
 		if view.purchase and view.purchase.chips then

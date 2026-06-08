@@ -46,6 +46,8 @@ function Profile.default(userId, name)
 		questClaimed = {}, -- [questId] = true (Belohnung schon abgeholt)
 		seasonIndex = -1, -- Saison, zu der die Saison-Punkte gehoeren (-1 = noch keine)
 		seasonPoints = 0, -- Saison-Punkte in der aktuellen Saison (Leaderboard)
+		referredBy = "", -- UserId des Einladenden (einmalig gesetzt, "" = niemand)
+		invitesAccepted = 0, -- Anzahl erfolgreich geworbener Freunde (als Einladender)
 	}
 end
 
@@ -95,6 +97,8 @@ function Profile.sanitize(raw, userId, name)
 		questClaimed = questClaimed,
 		seasonIndex = toInt(raw.seasonIndex, -1),
 		seasonPoints = math.max(0, toInt(raw.seasonPoints, 0)),
+		referredBy = (type(raw.referredBy) == "string" and raw.referredBy) or "",
+		invitesAccepted = math.max(0, toInt(raw.invitesAccepted, 0)),
 	}
 	if name and name ~= "" then
 		p.name = name

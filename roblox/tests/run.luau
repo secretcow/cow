@@ -14,6 +14,7 @@ local Progression = require("../src/shared/Progression")
 local Monetization = require("../src/shared/Monetization")
 local Quests = require("../src/shared/Quests")
 local Season = require("../src/shared/Season")
+local Friends = require("../src/shared/Friends")
 
 local passed = 0
 local failed = 0
@@ -909,6 +910,65 @@ do
 	local sp2 = Profile.sanitize({ seasonPoints = -10 }, 9, "P")
 	ok(sp2.seasonPoints == 0, "sanitize klemmt negative Punkte auf 0")
 	ok(sp2.seasonIndex == -1, "sanitize: fehlender Index -> -1")
+end
+
+-- ===================== Friends (Einladungen/Empfehlungen) =====================
+print("== Friends: Berechtigung & Werbung ==")
+do
+	-- Ein frisches Profil ist werbe-berechtigt; ein bereits geworbenes nicht.
+	local p = Profile.default(2, "Neu")
+	ok(Friends.eligibleInvitee(p), "frisches Profil ist werbe-berechtigt")
+	local reward = Friends.markReferred(p, 99, 2)
+	ok(reward ~= nil and reward.chips == Friends.INVITEE_CHIPS, "markReferred gibt Willkommensbonus")
+	ok(p.referredBy == "99", "referredBy wird auf Inviter-Id gesetzt")
+	ok(not Friends.eligibleInvitee(p), "nach Werbung nicht mehr berechtigt")
+	-- Doppelte Werbung tut nichts.
+	ok(Friends.markReferred(p, 77, 2) == nil, "doppelte Werbung -> nil")
+	ok(p.referredBy == "99", "doppelte Werbung aendert Inviter nicht")
+end
+
+print("== Friends: Guards (Selbstwerbung, ungueltig) ==")
+do
+	-- Selbstwerbung ist verboten.
+	local p = Profile.default(5, "Ich")
+	ok(Friends.markReferred(p, 5, 5) == nil, "Selbstwerbung -> nil")
+	ok(p.referredBy == "", "Selbstwerbung setzt nichts")
+	-- Leere/ungueltige Inviter-Id -> nil.
+	ok(Friends.markReferred(p, "", 5) == nil, "leere Inviter-Id -> nil")
+	ok(Friends.markReferred(p, nil, 5) == nil, "nil Inviter-Id -> nil")
+end
+
+print("== Friends: Empfehlungs-Belohnung & Cap ==")
+do
+	-- Erster geworbener Freund -> Belohnung + Zaehler 1.
+	local inv = Profile.default(10, "Werber")
+	local r1 = Friends.recordSuccess(inv)
+	ok(r1.rewarded and r1.count == 1 and r1.chips == Friends.INVITER_CHIPS, "1. Empfehlung: Belohnung + count 1")
+	-- Bis zum Cap wird verguetet.
+	for _ = 2, Friends.MAX_REWARDED do
+		Friends.recordSuccess(inv)
+	end
+	ok(inv.invitesAccepted == Friends.MAX_REWARDED, "Zaehler steht am Cap")
+	-- Ueber dem Cap: weiter zaehlen, nicht mehr verguetet.
+	local rOver = Friends.recordSuccess(inv)
+	ok(not rOver.rewarded and rOver.chips == 0, "ueber Cap: nicht verguetet")
+	ok(inv.invitesAccepted == Friends.MAX_REWARDED + 1, "ueber Cap: weiter gezaehlt")
+end
+
+print("== Friends: View & Profil-Persistenz ==")
+do
+	-- default + sanitize bewahren die Freundes-Felder.
+	ok(Profile.default(7).referredBy == "" and Profile.default(7).invitesAccepted == 0, "default hat Freundes-Felder")
+	local sp = Profile.sanitize({ referredBy = "42", invitesAccepted = 3 }, 7, "P")
+	ok(sp.referredBy == "42" and sp.invitesAccepted == 3, "sanitize bewahrt Freundes-Felder")
+	-- Ungueltige Werte werden bereinigt.
+	local sp2 = Profile.sanitize({ referredBy = 123, invitesAccepted = -5 }, 7, "P")
+	ok(sp2.referredBy == "" and sp2.invitesAccepted == 0, "sanitize bereinigt ungueltige Freundes-Felder")
+	-- View spiegelt Zaehler + Geworben-Status.
+	local v = Friends.view(sp)
+	ok(v.invitesAccepted == 3 and v.wasReferred == true, "view: Zaehler + wasReferred")
+	local vFresh = Friends.view(Profile.default(8))
+	ok(vFresh.invitesAccepted == 0 and vFresh.wasReferred == false, "view: frisches Profil")
 end
 
 -- ===================== Bot (KI-Gegner) =====================
