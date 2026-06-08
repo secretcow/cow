@@ -15,6 +15,7 @@ local Monetization = require("../src/shared/Monetization")
 local Quests = require("../src/shared/Quests")
 local Season = require("../src/shared/Season")
 local Friends = require("../src/shared/Friends")
+local Achievements = require("../src/shared/Achievements")
 
 local passed = 0
 local failed = 0
@@ -969,6 +970,64 @@ do
 	ok(v.invitesAccepted == 3 and v.wasReferred == true, "view: Zaehler + wasReferred")
 	local vFresh = Friends.view(Profile.default(8))
 	ok(vFresh.invitesAccepted == 0 and vFresh.wasReferred == false, "view: frisches Profil")
+end
+
+-- ===================== Achievements (Erfolge/Abzeichen) =====================
+print("== Achievements: View & Freischaltung ==")
+do
+	-- Frisches Profil: nichts freigeschaltet, nichts abgeholt.
+	local p = Profile.default(3, "Neu")
+	local v = Achievements.view(p)
+	ok(#v == #Achievements.LIST, "view liefert alle Erfolge")
+	ok(v[1].unlocked == false and v[1].claimed == false, "frisch: erster Erfolg gesperrt")
+	ok(Achievements.claimableCount(p) == 0, "frisch: nichts abholbereit")
+	-- Eine Hand gewinnen -> "hands_1" wird freigeschaltet.
+	p.handsWon = 1
+	local v2 = Achievements.view(p)
+	local h1 = nil
+	for _, a in v2 do
+		if a.id == "hands_1" then h1 = a end
+	end
+	ok(h1 ~= nil and h1.unlocked == true and h1.value == 1, "1 Hand: hands_1 freigeschaltet")
+	ok(Achievements.claimableCount(p) == 1, "1 Hand: genau 1 abholbereit")
+end
+
+print("== Achievements: Abholen & Guards ==")
+do
+	local p = Profile.default(4, "P")
+	-- Gesperrten Erfolg abholen -> abgelehnt.
+	local locked = Achievements.claim(p, "hands_1")
+	ok(locked.ok == false and locked.reason == "locked", "gesperrt: claim abgelehnt")
+	-- Unbekannte id -> abgelehnt.
+	ok(Achievements.claim(p, "gibtsnicht").ok == false, "unbekannte id: abgelehnt")
+	-- Erreichen + abholen.
+	p.handsWon = 10
+	local r1 = Achievements.claim(p, "hands_10")
+	ok(r1.ok == true and r1.chips > 0, "erreicht: claim gibt Belohnung")
+	ok(p.achClaimed["hands_10"] == true, "claim markiert als abgeholt")
+	-- Doppelt abholen -> abgelehnt.
+	local r2 = Achievements.claim(p, "hands_10")
+	ok(r2.ok == false and r2.reason == "claimed", "doppelt: abgelehnt")
+	-- hands_1 ist bei 10 Haenden auch erreicht und noch abholbar.
+	ok(Achievements.claim(p, "hands_1").ok == true, "niedrigere Stufe noch abholbar")
+end
+
+print("== Achievements: weitere Metriken & Persistenz ==")
+do
+	-- Pot-, XP- und Freundes-Metriken werten korrekt aus.
+	local p = Profile.default(6, "P")
+	p.biggestPot = 5000
+	p.xp = 2500
+	p.invitesAccepted = 5
+	ok(Achievements.claim(p, "pot_5000").ok == true, "Pot 5000: abholbar")
+	ok(Achievements.claim(p, "xp_2500").ok == true, "XP 2500: abholbar")
+	ok(Achievements.claim(p, "ref_5").ok == true, "5 Freunde: abholbar")
+	ok(Achievements.claim(p, "pot_20000").ok == false, "Pot 20000: noch gesperrt")
+	-- default + sanitize bewahren achClaimed (nur string-Keys mit Wert true).
+	ok(type(Profile.default(1).achClaimed) == "table", "default hat achClaimed-Tabelle")
+	local sp = Profile.sanitize({ achClaimed = { hands_1 = true, [5] = true, x = false } }, 1, "P")
+	ok(sp.achClaimed["hands_1"] == true, "sanitize bewahrt gueltigen achClaimed-Eintrag")
+	ok(sp.achClaimed[5] == nil and sp.achClaimed["x"] == nil, "sanitize verwirft ungueltige achClaimed-Eintraege")
 end
 
 -- ===================== Bot (KI-Gegner) =====================

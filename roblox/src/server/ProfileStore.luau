@@ -14,6 +14,7 @@ local Profile = require(Shared:WaitForChild("Profile"))
 local Quests = require(Shared:WaitForChild("Quests"))
 local Season = require(Shared:WaitForChild("Season"))
 local Friends = require(Shared:WaitForChild("Friends"))
+local Achievements = require(Shared:WaitForChild("Achievements"))
 
 local ProfileStore = {}
 
@@ -105,6 +106,7 @@ function ProfileStore.save(userId)
 					seasonPoints = p.seasonPoints,
 					referredBy = p.referredBy,
 					invitesAccepted = p.invitesAccepted,
+					achClaimed = p.achClaimed,
 			}
 		end)
 	end)
@@ -257,6 +259,20 @@ end
 function ProfileStore.claimQuest(userId, questId, name)
 	local p = ProfileStore.load(userId, name)
 	local res = Quests.claim(p, questId)
+	if res.ok then
+		Profile.adjustWallet(p, res.chips)
+		Profile.addXp(p, res.xp)
+		ProfileStore.save(userId)
+	end
+	return res, p
+end
+
+-- Holt die Belohnung eines erreichten Erfolgs (Meilenstein) ab. Schreibt Chips + XP
+-- gut und persistiert write-through (eine Belohnung darf nie verloren gehen). Gibt
+-- das Ergebnis (Achievements.claim) und das aktualisierte Profil zurueck.
+function ProfileStore.claimAchievement(userId, achId, name)
+	local p = ProfileStore.load(userId, name)
+	local res = Achievements.claim(p, achId)
 	if res.ok then
 		Profile.adjustWallet(p, res.chips)
 		Profile.addXp(p, res.xp)

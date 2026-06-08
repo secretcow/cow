@@ -1870,8 +1870,10 @@ end -- do (Saison-Overlay)
 -- (SocialService-Einladung) liegt hier im Client; die Belohnungs-Gutschrift im
 -- Server (ueber LaunchData "ref:<UserId>"). In ein do...end gekapselt, um
 -- Top-Level-Register zu sparen — Steuerung gebuendelt in EINER Tabelle:
---   friendsOv.shown — sichtbar?  friendsOv.render()/hide() — von aussen aufgerufen.
-local friendsOv = { shown = false }
+--   growthOv.friends.shown — sichtbar?  .render()/.hide()/.toast() — von aussen.
+-- (Gebuendelt mit dem Erfolge-Overlay in EINER Tabelle, um Top-Level-Register zu
+--  sparen — das Erfolge-Overlay nutzt growthOv.ach.*)
+local growthOv = { friends = { shown = false }, ach = { shown = false } }
 do
 	local SocialService = game:GetService("SocialService")
 	local localPlayer = Players.LocalPlayer
@@ -2041,14 +2043,14 @@ do
 	end
 
 	local function showFriends()
-		friendsOv.shown = true
+		growthOv.friends.shown = true
 		renderFriends()
 		friendsOverlay.Visible = true
 		scaleIn(friendsCard, 0.85, 0.2)
 	end
 
 	local function hideFriends()
-		friendsOv.shown = false
+		growthOv.friends.shown = false
 		friendsOverlay.Visible = false
 	end
 
@@ -2067,10 +2069,296 @@ do
 	friendsBtn.Activated:Connect(showFriends)
 	inviteBtn.Activated:Connect(promptInvite)
 	-- Nach aussen reichen (showScreen/langBtn/Profil-Update): render/hide/toast.
-	friendsOv.render = renderFriends
-	friendsOv.hide = hideFriends
-	friendsOv.toast = friendRewardToast
+	growthOv.friends.render = renderFriends
+	growthOv.friends.hide = hideFriends
+	growthOv.friends.toast = friendRewardToast
 end -- do (Freunde-Overlay)
+
+-- =====================================================================
+-- ========================= ERFOLGE / ABZEICHEN ======================
+-- =====================================================================
+-- Dauerhafte Meilensteine ueber die Lebenszeit-Statistiken (gewonnene Haende/
+-- Matches, groesster Pot, XP, geworbene Freunde). Jeder Erfolg ist EINMALIG
+-- abholbar (Chips + XP). Steuerung gebuendelt in EINER Top-Level-Tabelle (spart
+-- Register): growthOv.ach.shown / .render() / .hide() / .toast() (siehe growthOv oben).
+do
+	local ClaimAchievementEvent = Remotes:WaitForChild("ClaimAchievement")
+
+	-- "Erfolge" — Meilenstein-Abzeichen.
+	local achBtn = Instance.new("TextButton")
+	achBtn.Size = UDim2.new(0, 96, 0, 40)
+	achBtn.Position = UDim2.new(0.5, 216, 0, 146)
+	achBtn.BackgroundColor3 = Color3.fromRGB(200, 140, 50)
+	achBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	achBtn.Font = Enum.Font.GothamBold
+	achBtn.TextSize = 15
+	achBtn.Text = "🏅 Erfolge"
+	achBtn.Parent = lobbyScreen
+	mkCorner(achBtn, 10)
+
+	-- Badge mit der Anzahl abholbereiter Erfolge (rot, oben rechts am Button).
+	local achBadge = Instance.new("TextLabel")
+	achBadge.Size = UDim2.new(0, 20, 0, 20)
+	achBadge.Position = UDim2.new(1, -10, 0, -8)
+	achBadge.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+	achBadge.Font = Enum.Font.GothamBold
+	achBadge.TextSize = 12
+	achBadge.TextColor3 = Color3.fromRGB(255, 255, 255)
+	achBadge.Text = "0"
+	achBadge.Visible = false
+	achBadge.ZIndex = 5
+	achBadge.Parent = achBtn
+	mkCorner(achBadge, 10).CornerRadius = UDim.new(1, 0)
+
+	local achOverlay = Instance.new("Frame")
+	achOverlay.Size = UDim2.new(1, 0, 1, 0)
+	achOverlay.BackgroundColor3 = Color3.fromRGB(6, 9, 14)
+	achOverlay.BackgroundTransparency = 0.25
+	achOverlay.BorderSizePixel = 0
+	achOverlay.Visible = false
+	achOverlay.ZIndex = 100
+	achOverlay.Parent = root
+
+	local achCard = Instance.new("Frame")
+	achCard.Size = UDim2.new(0, 560, 0, 520)
+	achCard.Position = UDim2.new(0.5, -280, 0.5, -260)
+	achCard.BackgroundColor3 = COL_DARK
+	achCard.BorderSizePixel = 0
+	achCard.ZIndex = 101
+	achCard.Parent = achOverlay
+	mkCorner(achCard, 16)
+	local achStroke = Instance.new("UIStroke")
+	achStroke.Color = Color3.fromRGB(230, 180, 90)
+	achStroke.Thickness = 2
+	achStroke.Parent = achCard
+
+	local achTitle = Instance.new("TextLabel")
+	achTitle.Size = UDim2.new(1, -48, 0, 30)
+	achTitle.Position = UDim2.new(0, 24, 0, 16)
+	achTitle.BackgroundTransparency = 1
+	achTitle.Font = Enum.Font.GothamBold
+	achTitle.TextSize = 23
+	achTitle.TextColor3 = Color3.fromRGB(245, 205, 120)
+	achTitle.TextXAlignment = Enum.TextXAlignment.Left
+	achTitle.Text = "🏅 Erfolge"
+	achTitle.ZIndex = 102
+	achTitle.Parent = achCard
+
+	local achInfo = Instance.new("TextLabel")
+	achInfo.Size = UDim2.new(1, -48, 0, 18)
+	achInfo.Position = UDim2.new(0, 24, 0, 46)
+	achInfo.BackgroundTransparency = 1
+	achInfo.Font = Enum.Font.Gotham
+	achInfo.TextSize = 13
+	achInfo.TextColor3 = Color3.fromRGB(160, 170, 185)
+	achInfo.TextXAlignment = Enum.TextXAlignment.Left
+	achInfo.Text = ""
+	achInfo.ZIndex = 102
+	achInfo.Parent = achCard
+
+	local achClose = Instance.new("TextButton")
+	achClose.Size = UDim2.new(0, 36, 0, 36)
+	achClose.Position = UDim2.new(1, -44, 0, 14)
+	achClose.BackgroundTransparency = 1
+	achClose.Font = Enum.Font.GothamBold
+	achClose.TextSize = 24
+	achClose.TextColor3 = Color3.fromRGB(150, 160, 175)
+	achClose.Text = "✕"
+	achClose.ZIndex = 103
+	achClose.Parent = achCard
+
+	local achList = Instance.new("ScrollingFrame")
+	achList.Size = UDim2.new(1, -32, 1, -86)
+	achList.Position = UDim2.new(0, 16, 0, 74)
+	achList.BackgroundTransparency = 1
+	achList.BorderSizePixel = 0
+	achList.ScrollBarThickness = 6
+	achList.CanvasSize = UDim2.new(0, 0, 0, 0)
+	achList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	achList.ZIndex = 102
+	achList.Parent = achCard
+	local achLayout = Instance.new("UIListLayout")
+	achLayout.FillDirection = Enum.FillDirection.Vertical
+	achLayout.Padding = UDim.new(0, 6)
+	achLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	achLayout.Parent = achList
+
+	-- Aktualisiert das rote Badge am Button aus der Anzahl abholbereiter Erfolge.
+	local function updateBadge()
+		local list = (myProfile and myProfile.achievements) or {}
+		local n = 0
+		for _, a in list do
+			if a.unlocked and not a.claimed then
+				n += 1
+			end
+		end
+		achBadge.Text = tostring(n)
+		achBadge.Visible = n > 0
+	end
+
+	-- Baut die Erfolgs-Liste aus dem aktuellen Profil neu auf + aktualisiert das Badge.
+	local function renderAch()
+		updateBadge()
+		local list = (myProfile and myProfile.achievements) or {}
+		local claimable, unlocked = 0, 0
+		for _, a in list do
+			if a.unlocked then
+				unlocked += 1
+				if not a.claimed then
+					claimable += 1
+				end
+			end
+		end
+		achInfo.Text = if lang == "de"
+			then `Freigeschaltet: {unlocked}/{#list}   ·   Abholbereit: {claimable}`
+			else `Unlocked: {unlocked}/{#list}   ·   Ready to claim: {claimable}`
+		for _, ch in achList:GetChildren() do
+			if not ch:IsA("UIListLayout") then
+				ch:Destroy()
+			end
+		end
+		for i, a in list do
+			local card = Instance.new("Frame")
+			card.Size = UDim2.new(1, -8, 0, 96)
+			card.BackgroundColor3 = if a.claimed then Color3.fromRGB(30, 36, 46) else Color3.fromRGB(38, 44, 56)
+			card.BorderSizePixel = 0
+			card.LayoutOrder = i
+			card.ZIndex = 102
+			card.Parent = achList
+			mkCorner(card, 12)
+
+			local nm = Instance.new("TextLabel")
+			nm.Size = UDim2.new(1, -170, 0, 22)
+			nm.Position = UDim2.new(0, 14, 0, 8)
+			nm.BackgroundTransparency = 1
+			nm.Font = Enum.Font.GothamBold
+			nm.TextSize = 16
+			nm.TextColor3 = if a.unlocked then COL_TEXT else Color3.fromRGB(150, 160, 175)
+			nm.TextXAlignment = Enum.TextXAlignment.Left
+			nm.Text = (if a.unlocked then "🏅 " else "🔒 ") .. (if lang == "de" then a.name else a.nameEn)
+			nm.ZIndex = 103
+			nm.Parent = card
+
+			local desc = Instance.new("TextLabel")
+			desc.Size = UDim2.new(1, -170, 0, 16)
+			desc.Position = UDim2.new(0, 14, 0, 30)
+			desc.BackgroundTransparency = 1
+			desc.Font = Enum.Font.Gotham
+			desc.TextSize = 12
+			desc.TextColor3 = Color3.fromRGB(160, 170, 185)
+			desc.TextXAlignment = Enum.TextXAlignment.Left
+			desc.Text = if lang == "de" then a.desc else a.descEn
+			desc.ZIndex = 103
+			desc.Parent = card
+
+			local rew = Instance.new("TextLabel")
+			rew.Size = UDim2.new(1, -170, 0, 16)
+			rew.Position = UDim2.new(0, 14, 0, 48)
+			rew.BackgroundTransparency = 1
+			rew.Font = Enum.Font.GothamBold
+			rew.TextSize = 13
+			rew.TextColor3 = COL_GOLD
+			rew.TextXAlignment = Enum.TextXAlignment.Left
+			local xpPart = if a.xp and a.xp > 0 then ` · +{a.xp} XP` else ""
+			rew.Text = `+{a.chips} 🪙{xpPart}`
+			rew.ZIndex = 103
+			rew.Parent = card
+
+			-- Fortschrittsbalken (Wert/Ziel).
+			local barBg = Instance.new("Frame")
+			barBg.Size = UDim2.new(1, -170, 0, 12)
+			barBg.Position = UDim2.new(0, 14, 0, 70)
+			barBg.BackgroundColor3 = Color3.fromRGB(18, 22, 30)
+			barBg.BorderSizePixel = 0
+			barBg.ZIndex = 103
+			barBg.Parent = card
+			mkCorner(barBg, 6)
+			local frac = math.clamp((a.value or 0) / math.max(1, a.goal or 1), 0, 1)
+			local barFill = Instance.new("Frame")
+			barFill.Size = UDim2.new(frac, 0, 1, 0)
+			barFill.BackgroundColor3 = if a.unlocked then Color3.fromRGB(80, 200, 120) else COL_ACCENT
+			barFill.BorderSizePixel = 0
+			barFill.ZIndex = 104
+			barFill.Parent = barBg
+			mkCorner(barFill, 6)
+			local barTxt = Instance.new("TextLabel")
+			barTxt.Size = UDim2.new(1, 0, 1, 0)
+			barTxt.BackgroundTransparency = 1
+			barTxt.Font = Enum.Font.GothamBold
+			barTxt.TextSize = 10
+			barTxt.TextColor3 = COL_TEXT
+			barTxt.Text = `{a.value or 0}/{a.goal or 0}`
+			barTxt.ZIndex = 105
+			barTxt.Parent = barBg
+
+			-- Abhol-Knopf (Zustaende: gesperrt / abholbereit / abgeholt).
+			local btn = Instance.new("TextButton")
+			btn.Size = UDim2.new(0, 134, 0, 40)
+			btn.Position = UDim2.new(1, -148, 0.5, -20)
+			btn.Font = Enum.Font.GothamBold
+			btn.TextSize = 15
+			btn.ZIndex = 103
+			btn.Parent = card
+			mkCorner(btn, 8)
+			if a.claimed then
+				btn.BackgroundColor3 = Color3.fromRGB(60, 70, 88)
+				btn.TextColor3 = COL_TEXT
+				btn.AutoButtonColor = false
+				btn.Text = if lang == "de" then "✓ Abgeholt" else "✓ Claimed"
+			elseif a.unlocked then
+				btn.BackgroundColor3 = COL_GOLD
+				btn.TextColor3 = Color3.fromRGB(30, 26, 12)
+				btn.AutoButtonColor = true
+				btn.Text = if lang == "de" then "Abholen" else "Claim"
+				local achId = a.id
+				btn.Activated:Connect(function()
+					playSound("click")
+					-- optimistisch markieren; Server bestaetigt mit Belohnungs-Toast.
+					a.claimed = true
+					pcall(function()
+						ClaimAchievementEvent:FireServer(achId)
+					end)
+					renderAch()
+				end)
+			else
+				btn.BackgroundColor3 = Color3.fromRGB(44, 52, 66)
+				btn.TextColor3 = Color3.fromRGB(150, 160, 175)
+				btn.AutoButtonColor = false
+				btn.Text = if lang == "de" then "Gesperrt" else "Locked"
+			end
+		end
+	end
+
+	-- Belohnungs-Toast fuer einen abgeholten Erfolg.
+	local function achRewardToast(r)
+		if not (r and r.chips) then
+			return
+		end
+		local xpPart = if r.xp and r.xp > 0 then ` · +{r.xp} XP` else ""
+		showToast(if lang == "de"
+			then `🏅 Erfolg abgeholt: +{r.chips} 🪙{xpPart}`
+			else `🏅 Achievement claimed: +{r.chips} 🪙{xpPart}`)
+	end
+
+	local function showAch()
+		growthOv.ach.shown = true
+		renderAch()
+		achOverlay.Visible = true
+		scaleIn(achCard, 0.85, 0.2)
+	end
+
+	local function hideAch()
+		growthOv.ach.shown = false
+		achOverlay.Visible = false
+	end
+
+	achClose.Activated:Connect(hideAch)
+	achBtn.Activated:Connect(showAch)
+	-- Nach aussen reichen (showScreen/langBtn/Profil-Update): render/hide/toast.
+	growthOv.ach.render = renderAch
+	growthOv.ach.hide = hideAch
+	growthOv.ach.toast = achRewardToast
+end -- do (Erfolge-Overlay)
 
 -- =====================================================================
 -- =========================== TISCH-SCREEN ============================
@@ -2505,8 +2793,11 @@ local function showScreen(name)
 		if seasonOv.shown then
 			seasonOv.hide()
 		end
-		if friendsOv.shown then
-			friendsOv.hide()
+		if growthOv.friends.shown then
+			growthOv.friends.hide()
+		end
+		if growthOv.ach.shown then
+			growthOv.ach.hide()
 		end
 	end
 end
@@ -2985,9 +3276,10 @@ langBtn.Activated:Connect(function()
 	if seasonOv.shown then
 		seasonOv.render()
 	end
-	if friendsOv.shown then
-		friendsOv.render()
+	if growthOv.friends.shown then
+		growthOv.friends.render()
 	end
+	growthOv.ach.render() -- Liste (falls offen) + Badge in der neuen Sprache
 end)
 
 -- =====================================================================
@@ -3005,7 +3297,9 @@ StateEvent.OnClientEvent:Connect(function(view)
 		-- Saison-Belohnung (beim Saison-Wechsel gutgeschrieben), falls gemeldet.
 		showSeasonRewardToast(view.seasonReward)
 		-- Willkommensbonus, falls der Spieler ueber eine Einladung beigetreten ist.
-		friendsOv.toast(view.friendReward)
+		growthOv.friends.toast(view.friendReward)
+		-- Erfolgs-Badge (abholbereite Meilensteine) aktualisieren.
+		growthOv.ach.render()
 		-- Einsteiger-Tutorial beim allerersten Login automatisch zeigen.
 		if view.tutorialDone == false and not tutorialShownThisSession then
 			tutorialShownThisSession = true
@@ -3026,8 +3320,14 @@ StateEvent.OnClientEvent:Connect(function(view)
 		if questsShown then
 			renderQuests()
 		end
-		if friendsOv.shown then
-			friendsOv.render()
+		if growthOv.friends.shown then
+			growthOv.friends.render()
+		end
+		-- Erfolgs-Liste/Badge aktualisieren (neue Stats koennen Erfolge freischalten).
+		growthOv.ach.render()
+		-- Erfolgs-Belohnung abgeholt, falls der Server eine meldet.
+		if view.achReward then
+			growthOv.ach.toast(view.achReward)
 		end
 		-- Kauf-Bestaetigung (Chips), falls der Server eine meldet.
 		if view.purchase and view.purchase.chips then

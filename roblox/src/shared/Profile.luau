@@ -48,6 +48,7 @@ function Profile.default(userId, name)
 		seasonPoints = 0, -- Saison-Punkte in der aktuellen Saison (Leaderboard)
 		referredBy = "", -- UserId des Einladenden (einmalig gesetzt, "" = niemand)
 		invitesAccepted = 0, -- Anzahl erfolgreich geworbener Freunde (als Einladender)
+		achClaimed = {}, -- [achievementId] = true (Erfolgs-Belohnung schon abgeholt)
 	}
 end
 
@@ -71,6 +72,15 @@ function Profile.sanitize(raw, userId, name)
 		for k, v in raw.questClaimed do
 			if type(k) == "string" and v == true then
 				questClaimed[k] = true
+			end
+		end
+	end
+	-- Abgeholte Erfolge bereinigt uebernehmen (nur string-Keys, Wert true).
+	local achClaimed = {}
+	if type(raw.achClaimed) == "table" then
+		for k, v in raw.achClaimed do
+			if type(k) == "string" and v == true then
+				achClaimed[k] = true
 			end
 		end
 	end
@@ -99,6 +109,7 @@ function Profile.sanitize(raw, userId, name)
 		seasonPoints = math.max(0, toInt(raw.seasonPoints, 0)),
 		referredBy = (type(raw.referredBy) == "string" and raw.referredBy) or "",
 		invitesAccepted = math.max(0, toInt(raw.invitesAccepted, 0)),
+		achClaimed = achClaimed,
 	}
 	if name and name ~= "" then
 		p.name = name

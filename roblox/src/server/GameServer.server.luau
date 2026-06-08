@@ -29,6 +29,7 @@ local Monetization = require(Shared:WaitForChild("Monetization"))
 local Quests = require(Shared:WaitForChild("Quests"))
 local Season = require(Shared:WaitForChild("Season"))
 local Friends = require(Shared:WaitForChild("Friends"))
+local Achievements = require(Shared:WaitForChild("Achievements"))
 local MarketplaceService = game:GetService("MarketplaceService")
 -- ProfileStore liegt neben diesem Script (ServerScriptService.Server.ProfileStore).
 local ProfileStore = require(script.Parent:WaitForChild("ProfileStore"))
@@ -81,6 +82,7 @@ local TutorialDoneEvent = mkEvent("TutorialDone")
 local EquipEvent = mkEvent("Equip")
 local RefreshVipEvent = mkEvent("RefreshVip")
 local ClaimQuestEvent = mkEvent("ClaimQuest")
+local ClaimAchievementEvent = mkEvent("ClaimAchievement")
 local StateEvent = mkEvent("State")
 
 -- ---- Zustand ----
@@ -208,6 +210,7 @@ local function profileView(prof)
 	v.quests = Quests.view(prof)
 	v.season = Season.view(prof) -- Nummer, Restzeit, eigene Saison-Punkte
 	v.friends = Friends.view(prof) -- geworbene Freunde + ob selbst geworben
+	v.achievements = Achievements.view(prof) -- Erfolge: Wert/Ziel/Status je Meilenstein
 	return v
 end
 
@@ -1014,6 +1017,25 @@ ClaimQuestEvent.OnServerEvent:Connect(function(player, questId)
 	local payload = profileView(prof)
 	payload.screen = "profile"
 	payload.questReward = { chips = res.chips, xp = res.xp }
+	StateEvent:FireClient(player, payload)
+end)
+
+-- ===================== Erfolge / Abzeichen =====================
+-- Belohnung eines erreichten Erfolgs (Meilenstein) abholen. Serverseitig streng
+-- geprueft (erreicht + nicht abgeholt) — kein Schummeln moeglich.
+ClaimAchievementEvent.OnServerEvent:Connect(function(player, achId)
+	if type(achId) ~= "string" then
+		return
+	end
+	local id = idOf(player)
+	ProfileStore.load(id, player.Name)
+	local res, prof = ProfileStore.claimAchievement(id, achId, player.Name)
+	if not (res and res.ok) then
+		return
+	end
+	local payload = profileView(prof)
+	payload.screen = "profile"
+	payload.achReward = { chips = res.chips, xp = res.xp, id = res.id }
 	StateEvent:FireClient(player, payload)
 end)
 
