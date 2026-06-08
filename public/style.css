@@ -145,6 +145,7 @@ input { font: inherit; }
 .topbar {
   width: min(960px, 96vw); margin: 0 auto 6px; display: flex;
   align-items: center; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap;
 }
 .conn { font-size: 0.82rem; font-weight: 600; }
 .conn.on { color: #6fe09a; }
@@ -268,8 +269,7 @@ input { font: inherit; }
 .community { display: flex; gap: 6px; min-height: 80px; }
 .stage-label { font-size: 0.85rem; color: #cfe7d8; letter-spacing: 2px; text-transform: uppercase; }
 .blind-info {
-  position: absolute; top: 12px; left: 14px;
-  z-index: 3; white-space: nowrap; text-align: left;
+  white-space: nowrap; text-align: center;
   font-size: 0.74rem; font-weight: 700; color: #ffd86b;
   background: rgba(0, 0, 0, 0.55); padding: 4px 12px; border-radius: 999px;
   border: 1px solid rgba(255, 216, 107, 0.35);
