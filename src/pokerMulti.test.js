@@ -214,6 +214,11 @@ function players(n) {
   assert('Equities summieren ~100%', Math.abs(t.equities.reduce((s, e) => s + e.pct, 0) - 100) <= 3);
   assert('view exponiert runout', t.view('P0').runout === true);
   assert('Board noch nicht komplett', t.community.length < 5);
+  // Sweat: Karte fuer Karte aufdecken (preflop All-In -> Board waechst um genau 1).
+  const before = t.community.length;
+  const r1 = t.stepRunout();
+  assert('Sweat: erster Takt deckt genau 1 Karte auf', t.community.length === before + 1);
+  assert('Sweat: nach erstem Takt noch nicht fertig', r1.done === false);
   // Gestaffelt aufdecken, bis Hand vorbei.
   let steps = 0;
   let done = false;

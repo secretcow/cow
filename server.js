@@ -121,7 +121,10 @@ app.get('/api/profile', async (req, res) => {
  */
 const rooms = new Map();
 const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS ?? 10 * 60 * 1000); // Raum nach 10 Min. ohne Verbindung loeschen
-const RUNOUT_STEP_MS = Number(process.env.RUNOUT_STEP_MS ?? 1300); // Takt fuer All-In-Reveal
+// All-In-"Sweat": Karten kommen langsam und einzeln rein (TV-Poker-Spannung).
+const RUNOUT_START_MS = Number(process.env.RUNOUT_START_MS ?? 1800); // Pause, um die aufgedeckten Hände zu lesen
+const RUNOUT_STEP_MS = Number(process.env.RUNOUT_STEP_MS ?? 1200); // Takt pro Gemeinschaftskarte
+const RUNOUT_RIVER_MS = Number(process.env.RUNOUT_RIVER_MS ?? 2400); // extra Spannung vor der letzten Karte
 const CHAT_HISTORY = 60; // gespeicherte Chat-Nachrichten pro Raum
 // Schonfrist, bevor ein getrennter Spieler, der am Zug ist, automatisch
 // checkt/foldet. Verhindert, dass die Hand bei Verbindungsverlust ewig haengt,
@@ -399,7 +402,10 @@ io.on('connection', (socket) => {
         const res = room.table.stepRunout();
         broadcast(room);
         if (!res.done) {
-          room.runoutTimer = setTimeout(step, RUNOUT_STEP_MS);
+          // Vor der letzten Karte (River) extra lange warten = maximaler Sweat.
+          const remaining = 5 - (room.table.community?.length ?? 5);
+          const delay = remaining === 1 ? RUNOUT_RIVER_MS : RUNOUT_STEP_MS;
+          room.runoutTimer = setTimeout(step, delay);
         }
       } catch (e) {
         // Timer-Fehler wuerde sonst den Prozess killen: abfangen, Run-out
@@ -407,7 +413,8 @@ io.on('connection', (socket) => {
         logError('driveRunout', e);
       }
     };
-    room.runoutTimer = setTimeout(step, RUNOUT_STEP_MS);
+    // Erste Karte erst nach einer kurzen Lese-Pause (Hände sind schon aufgedeckt).
+    room.runoutTimer = setTimeout(step, RUNOUT_START_MS);
   }
 
   function maybeDriveRunout(room) {

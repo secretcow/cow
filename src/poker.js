@@ -517,24 +517,42 @@ export class Table {
   }
 
   // Ein Takt des gestaffelten All-In-Run-outs (vom Server per Timer aufgerufen).
-  // Deckt genau eine Strasse auf bzw. fuehrt am River den Showdown durch.
+  // "Sweat": deckt genau EINE Gemeinschaftskarte pro Takt auf (auch den Flop
+  // Karte fuer Karte), und fuehrt nach der fuenften Karte den Showdown durch.
   // Liefert { done } – done=true, sobald die Hand abgeschlossen ist.
   stepRunout() {
     if (!this.runoutActive) return { done: true };
-    if (this.stage === 'river') {
+    // Board komplett -> Showdown.
+    if (this.community.length >= 5) {
       this.runoutActive = false;
       this.equities = null;
       this.showdown();
       return { done: true };
     }
-    this.advanceStreet();
-    if (this.stage === 'river') {
-      // River liegt – Wahrscheinlichkeiten sind jetzt eindeutig, nicht mehr noetig.
-      this.computeEquities();
-    } else {
-      this.computeEquities();
-    }
+    this.dealOneRunoutCard();
+    this.computeEquities();
     return { done: false };
+  }
+
+  // Deckt im All-In-Run-out genau eine Gemeinschaftskarte auf, aktualisiert die
+  // Strasse und loggt erst, wenn eine Strasse vollstaendig sichtbar ist (damit
+  // der Flop nicht dreifach im Log auftaucht).
+  dealOneRunoutCard() {
+    this.community.push(this.deck.pop());
+    const len = this.community.length;
+    if (len <= 3) this.stage = 'flop';
+    else if (len === 4) this.stage = 'turn';
+    else this.stage = 'river';
+    if (len === 3) {
+      const cards = this.community.slice(0, 3).map((c) => ({ rank: c.rank, suit: c.suit }));
+      this.addLog({ key: 'community', street: 'flop', cards });
+    } else if (len === 4) {
+      const c = this.community[3];
+      this.addLog({ key: 'community', street: 'turn', cards: [{ rank: c.rank, suit: c.suit }] });
+    } else if (len === 5) {
+      const c = this.community[4];
+      this.addLog({ key: 'community', street: 'river', cards: [{ rank: c.rank, suit: c.suit }] });
+    }
   }
 
   dealCommunity(n) {
