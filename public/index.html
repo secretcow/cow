@@ -141,6 +141,14 @@
       </aside>
 
       <div class="table">
+        <div class="replay-bar hidden" id="replayBar">
+          <span class="replay-tag" id="replayTag"></span>
+          <button class="btn small" id="replayPrev" title="Zurück">⏮</button>
+          <button class="btn small" id="replayPlay" title="Play/Pause">⏸</button>
+          <button class="btn small" id="replayNext" title="Vor">⏭</button>
+          <span class="replay-pos" id="replayPos"></span>
+          <button class="btn small" id="replayClose" title="Schließen">✕</button>
+        </div>
         <div class="seats" id="seats"></div>
         <div class="center">
           <div class="pot" id="pot"></div>
@@ -174,6 +182,7 @@
           </div>
         </div>
         <button class="btn small hidden" id="showCardsBtn"></button>
+        <button class="btn small hidden" id="replayBtn"></button>
         <button class="btn small hidden" id="rebuyBtn"></button>
         <button class="btn primary big hidden" id="nextHandBtn"></button>
         <div class="match-over hidden" id="matchOver">

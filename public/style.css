@@ -276,6 +276,16 @@ input { font: inherit; }
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 .blind-info.hidden { display: none; }
+.replay-bar {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  z-index: 6; display: flex; align-items: center; gap: 6px;
+  background: rgba(0, 0, 0, 0.72); padding: 5px 8px; border-radius: 999px;
+  border: 1px solid rgba(255, 216, 107, 0.4); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+.replay-bar.hidden { display: none; }
+.replay-bar .btn { padding: 4px 9px; font-size: 0.85rem; }
+.replay-tag { font-size: 0.72rem; font-weight: 800; color: #ffd86b; letter-spacing: 0.5px; padding: 0 4px; }
+.replay-pos { font-size: 0.74rem; font-weight: 700; color: #cfe7d8; min-width: 38px; text-align: center; }
 .result-banner { font-size: 1.1rem; font-weight: 800; padding: 8px 20px; border-radius: 10px; background: rgba(0, 0, 0, 0.6); text-align: center; }
 .result-banner.win { background: var(--win); color: #062a13; }
 .result-banner.lose { background: #7a2820; }

@@ -119,6 +119,9 @@ const I18N = {
     firstHand: 'Erste Hand starten',
     nextHand: 'Nächste Hand',
     showCards: '🃏 Karten zeigen',
+    replay: '🎬 Replay',
+    replayTitle: 'Replay der letzten Hand',
+    replayLive: '● Live',
     leaveConfirm: 'Tisch verlassen und zurück zur Lobby?',
     myHandTitle: 'Deine Hand',
     allInTitle: 'All-In — Karten werden aufgedeckt',
@@ -240,6 +243,9 @@ const I18N = {
     firstHand: 'Start first hand',
     nextHand: 'Next hand',
     showCards: '🃏 Show cards',
+    replay: '🎬 Replay',
+    replayTitle: 'Replay of the last hand',
+    replayLive: '● Live',
     leaveConfirm: 'Leave the table and return to the lobby?',
     myHandTitle: 'Your hand',
     allInTitle: 'All-In — revealing cards',
@@ -560,8 +566,10 @@ socket.on('lobby', (lob) => {
   renderLobby(lob);
 });
 socket.on('state', (s) => {
+  captureFrame(s); // Live-Zustand fuer die Replay-Aufzeichnung puffern
   lastState = s;
-  render(s);
+  // Im Replay die Anzeige nicht stoeren – beim Schliessen wird live gerendert.
+  if (!replayMode) render(s);
 });
 socket.on('errorMsg', (msg) => toast(msg));
 
@@ -768,6 +776,123 @@ let prevYourTurn = false;
 let prevPot = 0;
 let newCardKeys = new Set();
 let revealedSeen = new Set(); // bereits animierte Gegnerkarten (Schluessel "seat:rank-copy")
+
+// ---------- Replay der letzten Hand ----------
+// Der Client puffert die Zustaende der laufenden Hand. Endet die Hand, kann der
+// Spieler sie Frame fuer Frame abspielen (kein Serverumbau noetig).
+let currentHandFrames = []; // Zustaende der aktuell laufenden/letzten Hand
+let lastFrameSig = ''; // Signatur des letzten gepufferten Frames (dedupe)
+let replayMode = false; // laeuft gerade ein Replay?
+let replayFrames = []; // eingefrorene Kopie fuers Abspielen
+let replayIdx = 0;
+let replayPlaying = false;
+let replayTimer = null;
+const REPLAY_STEP_MS = 1100;
+
+// Signatur eines Spielzustands – aendert sich genau dann, wenn sich etwas
+// Sichtbares getan hat (Strasse, Pot, Einsaetze, Stacks, Fold, Reveal).
+function frameSig(s) {
+  return [
+    s.handNo, s.stage, s.pot, (s.community || []).length,
+    (s.players || []).map((p) => `${p.bet}|${p.stack}|${p.folded ? 1 : 0}`).join(','),
+    s.result ? (s.result.reveal || []).length : 0,
+  ].join('#');
+}
+
+// Frame eines Live-Zustands puffern (nur aus dem 'state'-Handler aufgerufen,
+// nie beim Rendern historischer Replay-Frames).
+let captureHandNo = -1;
+function captureFrame(s) {
+  if (s.handNo !== captureHandNo) {
+    // Neue Hand -> Aufzeichnung frisch beginnen.
+    captureHandNo = s.handNo;
+    currentHandFrames = [];
+    lastFrameSig = '';
+  }
+  if (s.stage === 'idle') return; // Wartephase vor der ersten Hand nicht puffern
+  const sig = frameSig(s);
+  if (sig === lastFrameSig) return;
+  lastFrameSig = sig;
+  currentHandFrames.push(JSON.parse(JSON.stringify(s)));
+  if (currentHandFrames.length > 150) currentHandFrames.shift();
+}
+
+function replayAvailable(s) {
+  return !replayMode && s && s.stage === 'handover' && currentHandFrames.length >= 2;
+}
+
+function startReplay() {
+  if (currentHandFrames.length < 2) return;
+  replayFrames = currentHandFrames.slice();
+  replayIdx = 0;
+  replayMode = true;
+  replayPlaying = true;
+  $('replayBar').classList.remove('hidden');
+  renderReplayFrame();
+  scheduleReplayTick();
+}
+
+function scheduleReplayTick() {
+  clearTimeout(replayTimer);
+  if (!replayPlaying) return;
+  replayTimer = setTimeout(() => {
+    if (replayIdx < replayFrames.length - 1) {
+      replayIdx++;
+      renderReplayFrame();
+      scheduleReplayTick();
+    } else {
+      replayPlaying = false;
+      updateReplayBar();
+    }
+  }, REPLAY_STEP_MS);
+}
+
+function renderReplayFrame() {
+  // prev*-Tracking auf den Vorgaenger-Frame setzen, damit Karten-/Pot-Animationen
+  // beim Vorspulen korrekt (nur fuer wirklich neue Karten) ausgeloest werden.
+  const prev = replayFrames[Math.max(0, replayIdx - 1)];
+  prevCommunityCount = replayIdx === 0 ? 0 : (prev.community || []).length;
+  prevPot = replayIdx === 0 ? 0 : (prev.pot || 0);
+  render(replayFrames[replayIdx]);
+  updateReplayBar();
+}
+
+function updateReplayBar() {
+  $('replayPos').textContent = `${replayIdx + 1}/${replayFrames.length}`;
+  $('replayPlay').textContent = replayPlaying ? '⏸' : '▶';
+  $('replayTag').textContent = t('replayTitle');
+}
+
+function stepReplay(delta) {
+  replayPlaying = false;
+  clearTimeout(replayTimer);
+  replayIdx = Math.max(0, Math.min(replayFrames.length - 1, replayIdx + delta));
+  renderReplayFrame();
+}
+
+function toggleReplayPlay() {
+  if (replayPlaying) {
+    replayPlaying = false;
+    clearTimeout(replayTimer);
+    updateReplayBar();
+  } else {
+    if (replayIdx >= replayFrames.length - 1) replayIdx = 0;
+    replayPlaying = true;
+    renderReplayFrame();
+    scheduleReplayTick();
+  }
+}
+
+function closeReplay() {
+  replayMode = false;
+  replayPlaying = false;
+  clearTimeout(replayTimer);
+  $('replayBar').classList.add('hidden');
+  // Zurueck in den Live-Zustand.
+  prevCommunityCount = 0;
+  prevPot = 0;
+  if (lastState) render(lastState);
+}
 
 // Sitz-Positionen (Prozent) je Anzahl Gegner. "Ich" bin immer unten Mitte.
 const OPP_SLOTS = {
@@ -1081,6 +1206,25 @@ function renderControls(s, me) {
   const nextBtn = $('nextHandBtn');
   const matchOver = $('matchOver');
   const showBtn = $('showCardsBtn');
+  const replayBtn = $('replayBtn');
+
+  // Im Replay alle Live-Bedienelemente ausblenden (kein versehentliches Handeln).
+  if (replayMode) {
+    actionButtons.classList.add('hidden');
+    raisePanel.classList.add('hidden');
+    nextBtn.classList.add('hidden');
+    showBtn.classList.add('hidden');
+    replayBtn.classList.add('hidden');
+    $('rebuyBtn').classList.add('hidden');
+    matchOver.classList.add('hidden');
+    turnInd.textContent = '';
+    return;
+  }
+
+  // Replay-Knopf nach Rundenende anbieten, sobald genug Frames gepuffert sind.
+  const showReplay = replayAvailable(s);
+  replayBtn.classList.toggle('hidden', !showReplay);
+  if (showReplay) replayBtn.textContent = t('replay');
 
   // "Karten zeigen" nur nach einem Fold-Sieg fuer den Gewinner, der noch nicht gezeigt hat.
   const canShow =
@@ -1248,6 +1392,11 @@ document.querySelectorAll('[data-quick]').forEach((b) => {
 });
 $('nextHandBtn').onclick = () => socket.emit('startHand');
 $('showCardsBtn').onclick = () => socket.emit('showCards');
+$('replayBtn').onclick = () => startReplay();
+$('replayPrev').onclick = () => stepReplay(-1);
+$('replayNext').onclick = () => stepReplay(1);
+$('replayPlay').onclick = () => toggleReplayPlay();
+$('replayClose').onclick = () => closeReplay();
 $('rematchBtn').onclick = () => socket.emit('rematch');
 $('rebuyBtn').onclick = () => {
   socket.emit('rebuy', {}, (res) => {
@@ -1268,6 +1417,17 @@ function isTyping() {
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if ($('game').classList.contains('hidden')) return;
+
+  // Im Replay: Pfeiltasten spulen, Leertaste Play/Pause, Esc schliesst.
+  if (replayMode) {
+    if (isTyping()) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); stepReplay(-1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); stepReplay(1); }
+    else if (e.key === ' ') { e.preventDefault(); toggleReplayPlay(); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeReplay(); }
+    return;
+  }
+
   const s = lastState;
   if (!s) return;
 
@@ -1321,6 +1481,13 @@ $('leaveBtn').onclick = () => {
   if (!confirm(t('leaveConfirm'))) return;
   socket.emit('leaveRoom');
   forgetRoom();
+  // Laufendes Replay beenden und Aufzeichnung verwerfen.
+  replayMode = false;
+  replayPlaying = false;
+  clearTimeout(replayTimer);
+  $('replayBar').classList.add('hidden');
+  currentHandFrames = [];
+  captureHandNo = -1;
   lastState = null;
   lastLobby = null;
   chatMsgs = [];
