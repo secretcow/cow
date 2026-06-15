@@ -289,6 +289,24 @@ input { font: inherit; }
 .result-banner { font-size: 1.1rem; font-weight: 800; padding: 8px 20px; border-radius: 10px; background: rgba(0, 0, 0, 0.6); text-align: center; }
 .result-banner.win { background: var(--win); color: #062a13; }
 .result-banner.lose { background: #7a2820; }
+.result-banner.split {
+  background: linear-gradient(135deg, rgba(255, 216, 107, 0.18), rgba(0, 0, 0, 0.55));
+  border: 1px solid rgba(255, 216, 107, 0.5); padding: 10px 16px;
+  animation: splitPop 0.4s ease;
+}
+@keyframes splitPop { from { transform: scale(0.85); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.split-head { font-size: 1.05rem; font-weight: 900; color: #ffd86b; margin-bottom: 8px; }
+.split-shares { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
+.split-share {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px; padding: 6px 12px; min-width: 78px;
+}
+.split-share.me { border-color: var(--gold); background: rgba(255, 216, 107, 0.16); }
+.split-name { font-size: 0.82rem; font-weight: 700; color: #e6f1ea; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-amt { font-size: 0.92rem; font-weight: 900; color: #ffd86b; }
+.split-link { font-size: 1rem; opacity: 0.85; }
+.split-you { margin-top: 8px; font-size: 0.88rem; font-weight: 800; color: var(--win); }
 
 /* ===== Rundenende-Detail (Gewinnhand + Split-Pot) ===== */
 .result-detail {

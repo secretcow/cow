@@ -133,6 +133,8 @@ const I18N = {
     matchLost: '😿 Match verloren.',
     youWin: (n) => `Du gewinnst ${n} 🪙!`,
     splitPot: (n) => `Split Pot — ${n} 🪙 geteilt`,
+    splitPotTitle: '🤝 Split Pot',
+    splitYourShare: (n) => `Dein Anteil: +${n} 🪙`,
     playerWins: (name, n) => `${name} gewinnt ${n} 🪙`,
     wonWith: 'Gewonnen mit',
     mainPot: 'Hauptpot',
@@ -257,6 +259,8 @@ const I18N = {
     matchLost: '😿 Match lost.',
     youWin: (n) => `You win ${n} 🪙!`,
     splitPot: (n) => `Split pot — ${n} 🪙 shared`,
+    splitPotTitle: '🤝 Split Pot',
+    splitYourShare: (n) => `Your share: +${n} 🪙`,
     playerWins: (name, n) => `${name} wins ${n} 🪙`,
     wonWith: 'Won with',
     mainPot: 'Main pot',
@@ -1138,15 +1142,19 @@ function renderResult(s, me) {
   const banner = $('resultBanner');
   const detail = $('resultDetail');
   if (s.stage === 'handover' && s.result) {
-    banner.classList.remove('hidden', 'win', 'lose');
+    banner.classList.remove('hidden', 'win', 'lose', 'split');
     const myWin = s.result.winnings?.find((w) => w.i === s.meIdx)?.amount || 0;
-    if (myWin > 0) {
+    const winners = s.result.winners || [];
+    if (winners.length > 1) {
+      // Gleichstand: eigene Split-Pot-Grafik (statt "Du gewinnst"), auch wenn ich
+      // mitgewinne. Zeigt die Aufteilung mit allen Beteiligten.
+      banner.classList.add('split');
+      banner.innerHTML = splitBannerHtml(s, myWin);
+    } else if (myWin > 0) {
       banner.textContent = t('youWin', myWin);
       banner.classList.add('win');
-    } else if (s.result.winners.length > 1) {
-      banner.textContent = t('splitPot', s.result.pot);
     } else {
-      const w = s.result.winners[0];
+      const w = winners[0];
       const name = s.players[w]?.name || '?';
       banner.textContent = t('playerWins', name, s.result.pot);
       banner.classList.add('lose');
@@ -1156,6 +1164,29 @@ function renderResult(s, me) {
     banner.classList.add('hidden');
     if (detail) detail.classList.add('hidden');
   }
+}
+
+// Split-Pot-Grafik: Kopfzeile + Karten/Chips fuer jeden Beteiligten, eigener
+// Anteil hervorgehoben. Wird bei Gleichstand statt der Gewinn-Banner gezeigt.
+function splitBannerHtml(s, myWin) {
+  const winners = s.result.winners || [];
+  const n = winners.length;
+  const shares = winners
+    .map((i) => {
+      const amt =
+        s.result.winnings?.find((w) => w.i === i)?.amount ||
+        Math.floor((s.result.pot || 0) / n);
+      const name = s.players[i]?.name || '?';
+      const meCls = i === s.meIdx ? ' me' : '';
+      return `<span class="split-share${meCls}"><span class="split-name">${escapeHtml(name)}</span><span class="split-amt">+${amt} 🪙</span></span>`;
+    })
+    .join('<span class="split-link">🤝</span>');
+  const mine = myWin > 0 ? `<div class="split-you">${escapeHtml(t('splitYourShare', myWin))}</div>` : '';
+  return (
+    `<div class="split-head">${escapeHtml(t('splitPotTitle'))} · ${(s.result.pot || 0)} 🪙</div>` +
+    `<div class="split-shares">${shares}</div>` +
+    mine
+  );
 }
 
 function renderResultDetail(s, detail) {
