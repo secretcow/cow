@@ -191,7 +191,16 @@ function broadcast(room) {
   for (const p of room.players) {
     if (!p.connected) continue;
     if (room.table) io.to(p.socketId).emit('state', room.table.view(p.token));
-    io.to(p.socketId).emit('lobby', lobbyState(room, p.token));
+    // Das Lobby-Paket (Roster/Einstellungen) aendert sich waehrend einer Hand
+    // praktisch nie – nur senden, wenn sich der Inhalt ODER der Socket (Reconnect)
+    // geaendert hat. Spart bei jeder Poker-Aktion ein redundantes Paket pro Spieler.
+    const lob = lobbyState(room, p.token);
+    const json = JSON.stringify(lob);
+    const c = p._lobbyCache;
+    if (!c || c.socketId !== p.socketId || c.json !== json) {
+      p._lobbyCache = { socketId: p.socketId, json };
+      io.to(p.socketId).emit('lobby', lob);
+    }
   }
   checkMatchOver(room);
 }
