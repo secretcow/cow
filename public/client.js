@@ -408,6 +408,8 @@ function applyStatic() {
   if (typeof renderProfile === 'function') renderProfile();
   if ($('leaderboardBox')?.open) loadLeaderboard();
   if (lastLobby) renderLobby(lastLobby);
+  // Render-Caches verwerfen, damit Sitze/Log in der neuen Sprache neu gebaut werden.
+  invalidateRenderCaches();
   if (lastState) render(lastState);
 }
 
@@ -781,6 +783,25 @@ let prevPot = 0;
 let newCardKeys = new Set();
 let revealedSeen = new Set(); // bereits animierte Gegnerkarten (Schluessel "seat:rank-copy")
 
+// Render-Caches: vermeiden, bei jedem State-Update das gesamte DOM neu aufzubauen.
+// Sitz-Knoten werden ueber ihre Inhalts-Signatur wiederverwendet; nur wirklich
+// veraenderte Sitze werden neu gebaut. Log/Community wachsen inkrementell.
+let seatNodeCache = new Map(); // playerId -> { el, sig }
+let renderedLogLen = 0; // wie viele Log-Eintraege bereits im DOM stehen
+
+// Render-Caches verwerfen (Sprache gewechselt, Tisch verlassen) – erzwingt einen
+// vollstaendigen Neuaufbau bei der naechsten Render-Runde.
+function invalidateRenderCaches() {
+  seatNodeCache.clear();
+  renderedLogLen = 0;
+  const seats = $('seats');
+  if (seats) seats.innerHTML = '';
+  const logEl = $('log');
+  if (logEl) logEl.innerHTML = '';
+  const com = $('community');
+  if (com) com.innerHTML = '';
+}
+
 // ---------- Replay der letzten Hand ----------
 // Der Client puffert die Zustaende der laufenden Hand. Endet die Hand, kann der
 // Spieler sie Frame fuer Frame abspielen (kein Serverumbau noetig).
@@ -996,9 +1017,36 @@ function render(s) {
   prevPot = s.pot;
 }
 
+// Signatur eines Sitzes: alles, was buildSeat sichtbar macht. Bleibt sie gleich,
+// kann der vorhandene DOM-Knoten wiederverwendet werden (kein Neuaufbau).
+function seatSig(s, p, isMe, animate, revealAnim) {
+  const holeKey = (p.hole || []).map((c) => (c ? `${c.rank}-${c.copy}` : 'x')).join(',');
+  const rev = s.result?.reveal?.find((r) => r.i === p.seat);
+  const revKey = rev?.eval
+    ? `${rev.eval.score?.[0]}:${(rev.eval.cards || []).map((c) => `${c.rank}-${c.copy}`).join('.')}:${rev.folded ? 1 : 0}`
+    : '';
+  const eq = s.runout && s.equities && !p.folded ? s.equities.find((e) => e.i === p.seat)?.pct ?? '' : '';
+  const myHandKey = isMe && s.myHand && s.myHand.cat ? `${s.myHand.cat}` : '';
+  // Animations-Trigger erzwingen einen Neuaufbau, damit die Animation auch laeuft.
+  let animKey = animate ? 'A' : '';
+  if (revealAnim) {
+    for (const c of p.hole || []) {
+      if (c && revealAnim.has(`${p.seat}:${c.rank}-${c.copy}`)) { animKey += 'R'; break; }
+    }
+  }
+  // Nur das Showdown/Handover-Label haengt von der Strasse ab – als Boolean
+  // kodieren, damit Flop->Turn->River nicht unnoetig alle Sitze neu baut.
+  const showLabel = s.stage === 'showdown' || s.stage === 'handover' ? 1 : 0;
+  return [
+    isMe ? 1 : 0, p.out ? 1 : 0, p.folded ? 1 : 0, p.id === s.toActId ? 1 : 0,
+    p.isButton ? 1 : 0, p.isSB ? 1 : 0, p.isBB ? 1 : 0,
+    p.name, p.stack, p.bet, p.allIn ? 1 : 0,
+    holeKey, revKey, eq, myHandKey, showLabel, s.flush ? 1 : 0, lang, animKey,
+  ].join('#');
+}
+
 function renderSeats(s, animate, revealAnim) {
   const container = $('seats');
-  container.innerHTML = '';
   const n = s.players.length;
   const meIdx = s.meIdx;
 
@@ -1007,26 +1055,43 @@ function renderSeats(s, animate, revealAnim) {
   for (let k = 1; k < n; k++) opps.push(s.players[(meIdx + k) % n]);
   const slots = OPP_SLOTS[opps.length] || OPP_SLOTS[5];
 
-  opps.forEach((p, idx) => {
-    const [x, y] = slots[idx];
-    const seat = buildSeat(s, p, false, animate, revealAnim);
-    seat.style.left = `${x}%`;
-    seat.style.top = `${y}%`;
-    container.appendChild(seat);
-  });
+  const seen = new Set();
+  // Baut den Sitz nur neu, wenn sich seine Signatur geaendert hat; Position wird
+  // immer gesetzt (Slots koennen sich verschieben, wenn jemand geht/kommt).
+  const place = (p, isMe, x, y) => {
+    seen.add(p.id);
+    const sig = seatSig(s, p, isMe, animate, revealAnim);
+    let entry = seatNodeCache.get(p.id);
+    if (!entry || entry.sig !== sig) {
+      const el = buildSeat(s, p, isMe, animate, revealAnim);
+      if (entry && entry.el.parentNode) entry.el.replaceWith(el);
+      else container.appendChild(el);
+      entry = { el, sig };
+      seatNodeCache.set(p.id, entry);
+    } else if (!entry.el.parentNode) {
+      container.appendChild(entry.el);
+    }
+    const el = entry.el;
+    if (isMe) { el.style.left = '50%'; el.style.bottom = '2%'; el.style.top = ''; }
+    else { el.style.left = `${x}%`; el.style.top = `${y}%`; el.style.bottom = ''; }
+  };
 
-  // Ich unten Mitte
-  const meSeat = buildSeat(s, s.players[meIdx], true, animate, revealAnim);
-  meSeat.style.left = '50%';
-  meSeat.style.bottom = '2%';
-  meSeat.classList.add('seat-bottom');
-  container.appendChild(meSeat);
+  opps.forEach((p, idx) => place(p, false, slots[idx][0], slots[idx][1]));
+  place(s.players[meIdx], true);
+
+  // Verwaiste Sitze (Spieler weg) entfernen.
+  for (const [id, entry] of seatNodeCache) {
+    if (!seen.has(id)) {
+      if (entry.el.parentNode) entry.el.remove();
+      seatNodeCache.delete(id);
+    }
+  }
 }
 
 function buildSeat(s, p, isMe, animate, revealAnim) {
   const seat = document.createElement('div');
   seat.className = 'seat';
-  if (isMe) seat.classList.add('me');
+  if (isMe) { seat.classList.add('me'); seat.classList.add('seat-bottom'); }
   if (p.out) seat.classList.add('out');
   else if (p.folded) seat.classList.add('folded');
   if (p.id === s.toActId) seat.classList.add('active-turn');
@@ -1121,17 +1186,29 @@ function buildSeat(s, p, isMe, animate, revealAnim) {
 
 function renderCommunity(s) {
   const com = $('community');
-  com.innerHTML = '';
-  let dealIdx = 0;
-  for (const c of s.community) {
+  const cards = s.community || [];
+  // Inkrementell: bereits ausgeteilte Karten bleiben stehen (kein Flackern, keine
+  // erneute Animation). Nur neue Karten werden angehaengt.
+  let dealt = com.querySelectorAll('.card:not(.placeholder)').length;
+  if (dealt > cards.length) {
+    // Weniger Karten als gerendert (neue Hand / Zurueckspulen) -> Neuaufbau.
+    com.innerHTML = '';
+    dealt = 0;
+  }
+  // Platzhalter entfernen, danach unten passend neu setzen.
+  com.querySelectorAll('.card.placeholder').forEach((el) => el.remove());
+  let added = 0;
+  for (let i = dealt; i < cards.length; i++) {
+    const c = cards[i];
     const el = cardEl(c);
     if (newCardKeys.has(`${c.rank}-${c.copy}`)) {
       el.classList.add('dealing');
-      el.style.animationDelay = `${dealIdx++ * 0.12}s`;
+      el.style.animationDelay = `${added * 0.12}s`;
     }
     com.appendChild(el);
+    added++;
   }
-  for (let i = s.community.length; i < 5; i++) {
+  for (let i = cards.length; i < 5; i++) {
     const ph = document.createElement('div');
     ph.className = 'card placeholder';
     com.appendChild(ph);
@@ -1362,14 +1439,23 @@ function clampRaise(v) {
 
 function renderLog(log) {
   const el = $('log');
-  el.innerHTML = log
-    .map((ev) => {
-      const fn = I18N[lang].log[ev.key];
-      const text = fn ? fn(ev) : ev.key;
-      return `<div>${escapeHtml(text)}</div>`;
-    })
-    .join('');
-  el.scrollTop = el.scrollHeight;
+  // Inkrementell anhaengen statt die ganze (wachsende) Liste neu zu bauen.
+  // Schrumpft das Log (neue Hand / Zurueckspulen), komplett neu aufbauen.
+  if (log.length < renderedLogLen) {
+    el.innerHTML = '';
+    renderedLogLen = 0;
+  }
+  for (let i = renderedLogLen; i < log.length; i++) {
+    const ev = log[i];
+    const fn = I18N[lang].log[ev.key];
+    const div = document.createElement('div');
+    div.textContent = fn ? fn(ev) : ev.key;
+    el.appendChild(div);
+  }
+  if (log.length !== renderedLogLen) {
+    renderedLogLen = log.length;
+    el.scrollTop = el.scrollHeight;
+  }
 }
 
 // ---------- Aktionen ----------
@@ -1523,7 +1609,7 @@ $('leaveBtn').onclick = () => {
   lastLobby = null;
   chatMsgs = [];
   renderChat();
-  $('seats').innerHTML = '';
+  invalidateRenderCaches();
   $('game').classList.add('hidden');
   $('waiting').classList.add('hidden');
   $('lobby').classList.remove('hidden');
