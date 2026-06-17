@@ -224,14 +224,21 @@ input { font: inherit; }
   border-radius: 999px; font-size: 0.78rem; font-weight: 700;
 }
 .equity {
-  background: rgba(20, 105, 74, 0.92); color: #eafff4; padding: 2px 10px;
+  position: relative; background: rgba(20, 105, 74, 0.92); color: #eafff4; padding: 2px 10px;
   border-radius: 999px; font-size: 0.82rem; font-weight: 800;
   border: 2px solid var(--win); box-shadow: 0 0 10px rgba(46, 204, 113, 0.5);
-  letter-spacing: 0.5px; animation: equityPulse 1.4s ease-in-out infinite;
+  letter-spacing: 0.5px;
+}
+/* Pulsierendes Leuchten ueber ein Pseudo-Element per opacity (Compositor-only)
+   statt box-shadow zu animieren – kein Repaint pro Frame auf schwachen Geraeten. */
+.equity::after {
+  content: ''; position: absolute; inset: -2px; border-radius: 999px;
+  box-shadow: 0 0 16px rgba(46, 204, 113, 0.85); pointer-events: none;
+  will-change: opacity; animation: equityPulse 1.4s ease-in-out infinite;
 }
 @keyframes equityPulse {
-  0%, 100% { box-shadow: 0 0 6px rgba(46, 204, 113, 0.4); }
-  50% { box-shadow: 0 0 16px rgba(46, 204, 113, 0.85); }
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
 }
 
 /* ===== Karten ===== */
@@ -456,4 +463,13 @@ input { font: inherit; }
   .seat { width: 120px; }
   .pname { max-width: 64px; }
   .table { border-radius: 40% / 26%; height: min(58vh, 480px); }
+}
+
+/* Respektiert die System-Einstellung "Bewegung reduzieren": schaltet die
+   nicht-essenziellen (v. a. dauerhaft laufenden) Animationen ab – spart auf
+   Mobilgeraeten Repaints und Akku und hilft bewegungsempfindlichen Nutzern. */
+@media (prefers-reduced-motion: reduce) {
+  .card.dealing, .card.revealing,
+  .result-banner.split, .win-hand,
+  .equity::after { animation: none !important; }
 }
