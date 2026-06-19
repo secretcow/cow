@@ -1008,6 +1008,8 @@ function render(s) {
     const iWon = s.result.winners.includes(s.meIdx);
     if (iWon) sfx.win();
     else sfx.lose();
+    // Pot fliegt zu den Gewinnern (nicht beim Replay-Spulen).
+    if (!replayMode) flyPotToWinners(s);
   }
 
   prevHandNo = s.handNo;
@@ -1015,6 +1017,49 @@ function render(s) {
   prevStage = s.stage;
   prevYourTurn = s.yourTurn;
   prevPot = s.pot;
+}
+
+// Pot-zum-Gewinner-Animation: beim Showdown fliegen Chips vom zentralen Pot
+// zu jedem Gewinner-Sitz (compositor-only: transform/opacity).
+function flyPotToWinners(s) {
+  const winners = s.result?.winners;
+  if (!winners || !winners.length) return;
+  // Bewegungsempfindliche Nutzer: keine fliegenden Chips.
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const potEl = $('pot');
+  if (!potEl) return;
+  const pr = potEl.getBoundingClientRect();
+  const px = pr.left + pr.width / 2;
+  const py = pr.top + pr.height / 2;
+  for (const seatIdx of winners) {
+    const pid = s.players[seatIdx]?.id;
+    const seatEl = pid && seatNodeCache.get(pid)?.el;
+    if (!seatEl) continue;
+    const sr = seatEl.getBoundingClientRect();
+    const sx = sr.left + sr.width / 2;
+    const sy = sr.top + sr.height / 2;
+    const count = 6;
+    for (let k = 0; k < count; k++) {
+      const chip = document.createElement('div');
+      chip.className = 'fly-chip';
+      chip.textContent = '🪙';
+      chip.style.left = `${px}px`;
+      chip.style.top = `${py}px`;
+      chip.style.transitionDelay = `${k * 0.05}s`;
+      document.body.appendChild(chip);
+      const jx = (Math.random() - 0.5) * 26;
+      const jy = (Math.random() - 0.5) * 26;
+      // Zwei rAF, damit der Startzustand sicher gerendert ist, bevor die
+      // Transition zum Zielsitz startet.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          chip.style.transform = `translate(${sx - px + jx}px, ${sy - py + jy}px) scale(0.7)`;
+          chip.style.opacity = '0';
+        })
+      );
+      setTimeout(() => chip.remove(), 1100 + k * 50);
+    }
+  }
 }
 
 // Signatur eines Sitzes: alles, was buildSeat sichtbar macht. Bleibt sie gleich,
