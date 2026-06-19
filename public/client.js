@@ -1037,11 +1037,12 @@ function seatSig(s, p, isMe, animate, revealAnim) {
   // Nur das Showdown/Handover-Label haengt von der Strasse ab – als Boolean
   // kodieren, damit Flop->Turn->River nicht unnoetig alle Sitze neu baut.
   const showLabel = s.stage === 'showdown' || s.stage === 'handover' ? 1 : 0;
+  const la = p.lastAction ? `${p.lastAction.type}:${p.lastAction.to || ''}:${p.lastAction.allIn ? 1 : 0}` : '';
   return [
     isMe ? 1 : 0, p.out ? 1 : 0, p.folded ? 1 : 0, p.id === s.toActId ? 1 : 0,
     p.isButton ? 1 : 0, p.isSB ? 1 : 0, p.isBB ? 1 : 0,
     p.name, p.stack, p.bet, p.allIn ? 1 : 0,
-    holeKey, revKey, eq, myHandKey, showLabel, s.flush ? 1 : 0, lang, animKey,
+    holeKey, revKey, eq, myHandKey, showLabel, s.flush ? 1 : 0, lang, la, animKey,
   ].join('#');
 }
 
@@ -1088,6 +1089,21 @@ function renderSeats(s, animate, revealAnim) {
   }
 }
 
+// Kurztext + Stilklasse fuer die "letzte Aktion"-Blase am Sitz. Poker-Begriffe
+// sind in DE/EN identisch (wie schon bei den Aktions-Buttons).
+function actionBubble(la) {
+  if (!la) return null;
+  if (la.allIn) return { text: t('allInTag'), cls: 'allin' };
+  switch (la.type) {
+    case 'fold': return { text: t('fold'), cls: 'fold' };
+    case 'check': return { text: t('check'), cls: 'check' };
+    case 'call': return { text: 'Call', cls: 'call' };
+    case 'bet': return { text: `Bet ${la.to}`, cls: 'bet' };
+    case 'raise': return { text: `${t('raise')} ${la.to}`, cls: 'raise' };
+    default: return null;
+  }
+}
+
 function buildSeat(s, p, isMe, animate, revealAnim) {
   const seat = document.createElement('div');
   seat.className = 'seat';
@@ -1095,6 +1111,15 @@ function buildSeat(s, p, isMe, animate, revealAnim) {
   if (p.out) seat.classList.add('out');
   else if (p.folded) seat.classList.add('folded');
   if (p.id === s.toActId) seat.classList.add('active-turn');
+
+  // "Letzte Aktion"-Blase (Check/Call/Raise …) – erscheint mit Pop-Animation.
+  const ab = actionBubble(p.lastAction);
+  if (ab) {
+    const bubble = document.createElement('div');
+    bubble.className = `last-act last-act-${ab.cls}`;
+    bubble.textContent = ab.text;
+    seat.appendChild(bubble);
+  }
 
   // Karten
   const hole = document.createElement('div');

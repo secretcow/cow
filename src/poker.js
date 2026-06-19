@@ -99,6 +99,7 @@ export class Table {
       folded: false,
       allIn: false,
       inHand: false,
+      lastAction: null, // letzte Aktion dieser Setzrunde (fuer die Sitz-Anzeige)
     }));
     this.n = this.players.length;
     this.button = this.n - 1; // erstes startHand rotiert auf 0
@@ -260,6 +261,7 @@ export class Table {
       p.allIn = false;
       p.inHand = p.stack > 0;
       p.folded = !p.inHand; // Spieler ohne Chips sitzen aus
+      p.lastAction = null;
     }
 
     // Karten austeilen (nur aktive Spieler), beginnend links vom Button.
@@ -333,6 +335,7 @@ export class Table {
       case 'fold': {
         p.folded = true;
         p.inHand = false;
+        p.lastAction = { type: 'fold' };
         this.addLog({ key: 'fold', name: p.name });
         const remaining = this.players.filter((x) => !x.folded);
         if (remaining.length === 1) {
@@ -343,12 +346,14 @@ export class Table {
       case 'check': {
         if (toCall > 0) return { error: 'Check nicht moeglich, es liegt ein Einsatz an.' };
         this.actedSinceRaise.add(i);
+        p.lastAction = { type: 'check' };
         this.addLog({ key: 'check', name: p.name });
         break;
       }
       case 'call': {
         if (toCall <= 0) {
           this.actedSinceRaise.add(i);
+          p.lastAction = { type: 'check' };
           this.addLog({ key: 'check', name: p.name });
           break;
         }
@@ -358,6 +363,7 @@ export class Table {
         p.committed += pay;
         if (p.stack === 0) p.allIn = true;
         this.actedSinceRaise.add(i);
+        p.lastAction = { type: 'call', amount: pay, allIn: p.allIn };
         this.addLog({ key: 'call', name: p.name, amount: pay, allIn: p.allIn });
         break;
       }
@@ -390,6 +396,8 @@ export class Table {
           this.actedSinceRaise.add(i);
         }
         this.currentBet = raiseTo;
+        // "Bet" wenn vorher kein Einsatz lag, sonst "Raise".
+        p.lastAction = { type: prevBet > 0 ? 'raise' : 'bet', to: raiseTo, allIn: p.allIn };
         this.addLog({ key: 'raise', name: p.name, to: raiseTo, allIn: p.allIn });
         break;
       }
@@ -466,7 +474,12 @@ export class Table {
   }
 
   proceedAfterBetting() {
-    for (const p of this.players) p.bet = 0;
+    // Neue Setzrunde: Einsaetze und Aktions-Anzeigen zuruecksetzen (gefoldete
+    // Spieler behalten ihr "Fold", solange sie gefoldet sind).
+    for (const p of this.players) {
+      p.bet = 0;
+      if (!p.folded) p.lastAction = null;
+    }
     this.currentBet = 0;
     this.minRaise = this.bigBlind;
     this.actedSinceRaise = new Set();
@@ -846,6 +859,7 @@ export class Table {
         isBB: i === this.bbPos,
         isMe,
         seat: i,
+        lastAction: p.lastAction || null,
         hole: revealHole ? p.hole : p.hole.map(() => null),
       };
     };

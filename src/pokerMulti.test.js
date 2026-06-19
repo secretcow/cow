@@ -346,5 +346,24 @@ function quickHand(t) {
   assert('cash deaktiviert tournament', t3.tournament === false);
 }
 
+// ---- Test: lastAction pro Spieler (Sitz-Anzeige) ----
+{
+  const t = new Table(players(3), { flush: false });
+  t.startHand();
+  // Vor jeder Aktion ist lastAction null.
+  assert('lastAction initial null', t.players.every((p) => p.lastAction === null));
+  // Erster Spieler am Zug erhoeht.
+  const cur = t.players[t.toAct];
+  const a = t.view(cur.id).actions;
+  t.act(cur.id, 'raise', a.minRaiseTo);
+  const after = t.players.find((p) => p.id === cur.id);
+  assert('lastAction raise/bet gesetzt', after.lastAction && (after.lastAction.type === 'raise' || after.lastAction.type === 'bet'));
+  assert('lastAction in view exponiert', t.view(cur.id).players.find((p) => p.id === cur.id).lastAction != null);
+  // Naechster foldet -> lastAction fold.
+  const nxt = t.players[t.toAct];
+  t.act(nxt.id, 'fold');
+  assert('lastAction fold gesetzt', t.players.find((p) => p.id === nxt.id).lastAction.type === 'fold');
+}
+
 console.log(`\n${pass} bestanden, ${fail} fehlgeschlagen`);
 process.exit(fail === 0 ? 0 : 1);
