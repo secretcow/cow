@@ -130,6 +130,10 @@ const CHAT_HISTORY = 60; // gespeicherte Chat-Nachrichten pro Raum
 // checkt/foldet. Verhindert, dass die Hand bei Verbindungsverlust ewig haengt,
 // gibt aber Zeit fuer einen kurzen Reconnect.
 const DISCONNECT_GRACE_MS = Number(process.env.DISCONNECT_GRACE_MS ?? 30000);
+// Bedenkzeit fuer verbundene Spieler am Zug. Laeuft die Zeit ab, wird automatisch
+// gecheckt (sonst gefoldet) – verhindert, dass ein Tisch ewig auf jemanden wartet.
+// Grosszuegig gewaehlt (Freundesrunde); per Env anpassbar, 0 schaltet es ab.
+const TURN_MS = Number(process.env.TURN_MS ?? 40000);
 
 function makeCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -188,9 +192,20 @@ function lobbyState(room, forToken) {
 }
 
 function broadcast(room) {
+  const now = Date.now();
+  const turnMsLeft =
+    room.turnDeadline && room.table && room.table.toAct !== null
+      ? Math.max(0, room.turnDeadline - now)
+      : null;
   for (const p of room.players) {
     if (!p.connected) continue;
-    if (room.table) io.to(p.socketId).emit('state', room.table.view(p.token));
+    if (room.table) {
+      const v = room.table.view(p.token);
+      // Zug-Uhr fuer den Countdown-Ring (nur fuer den Spieler am Zug relevant).
+      v.turnMsLeft = turnMsLeft;
+      v.turnTotalMs = turnMsLeft != null ? room.turnTotalMs || null : null;
+      io.to(p.socketId).emit('state', v);
+    }
     // Das Lobby-Paket (Roster/Einstellungen) aendert sich waehrend einer Hand
     // praktisch nie – nur senden, wenn sich der Inhalt ODER der Socket (Reconnect)
     // geaendert hat. Spart bei jeder Poker-Aktion ein redundantes Paket pro Spieler.
@@ -341,6 +356,8 @@ io.on('connection', (socket) => {
       runoutTimer: null,
       autoActTimer: null,
       autoActFor: null,
+      turnDeadline: null, // Zeitstempel, wann der Zug automatisch endet (Ring)
+      turnTotalMs: null, // Gesamtdauer der aktuellen Zug-Uhr
       chat: [],
       matchRecorded: false,
     };
@@ -438,35 +455,40 @@ io.on('connection', (socket) => {
       room.autoActTimer = null;
     }
     room.autoActFor = null;
+    room.turnDeadline = null;
+    room.turnTotalMs = null;
   }
 
-  // Foldet/checkt automatisch fuer Spieler am Zug, die getrennt sind – solange,
-  // bis ein verbundener Spieler dran ist oder die Hand vorbei ist. Verhindert den
-  // Deadlock, wenn jemand mitten in der Hand die Verbindung verliert oder den
-  // Tisch verlaesst, waehrend er am Zug ist.
-  function autoActDisconnected(room) {
+  // Handelt einmal automatisch fuer den Spieler am Zug (Check, sonst Fold).
+  function autoActOne(room) {
     const t = room.table;
-    if (!t) return false;
-    let acted = false;
-    while (
-      t.toAct !== null &&
-      t.stage !== 'handover' &&
-      t.stage !== 'showdown'
-    ) {
-      const seat = room.players[t.toAct]; // Engine-Index == room.players-Index
-      if (!seat || seat.connected) break; // verbundener Spieler: nicht eingreifen
-      const a = t.view(seat.token).actions;
-      if (!a) break;
-      const type = a.canCheck ? 'check' : 'fold';
-      const res = t.act(seat.token, type);
-      if (res?.error) break;
+    const seat = room.players[t.toAct];
+    if (!seat) return false;
+    const a = t.view(seat.token).actions;
+    if (!a) return false;
+    const res = t.act(seat.token, a.canCheck ? 'check' : 'fold');
+    return !res?.error;
+  }
+
+  // Wird ausgeloest, wenn die Zug-Zeit ablaeuft: handelt fuer den aktuellen Spieler
+  // und raeumt danach direkt nachfolgende GETRENNTE Spieler mit ab (kein erneutes
+  // Warten pro getrenntem Sitz), bis ein verbundener Spieler dran ist.
+  function autoActOnTimeout(room) {
+    const t = room.table;
+    if (!t || t.toAct === null || t.stage === 'handover' || t.stage === 'showdown') return false;
+    let acted = autoActOne(room);
+    while (t.toAct !== null && t.stage !== 'handover' && t.stage !== 'showdown') {
+      const seat = room.players[t.toAct];
+      if (!seat || seat.connected) break; // verbundener Spieler bekommt eigene Zeit
+      if (!autoActOne(room)) break;
       acted = true;
     }
     return acted;
   }
 
-  // Plant das automatische Handeln, falls der Spieler am Zug getrennt ist.
-  // `immediate` (z. B. bei bewusstem Verlassen) handelt ohne Schonfrist.
+  // Plant das automatische Handeln fuer den Spieler am Zug. Verbundene Spieler
+  // bekommen TURN_MS Bedenkzeit, getrennte nur die kurze Schonfrist.
+  // `immediate` (z. B. bewusstes Verlassen) handelt ohne Wartezeit.
   function scheduleAutoAct(room, immediate = false) {
     const t = room.table;
     if (!t || t.toAct === null || t.stage === 'handover' || t.stage === 'showdown') {
@@ -474,32 +496,42 @@ io.on('connection', (socket) => {
       return;
     }
     const seat = room.players[t.toAct];
-    if (!seat || seat.connected) {
+    if (!seat) {
       clearAutoAct(room);
       return;
     }
-    // Laeuft bereits ein Timer fuer genau diesen Spieler? Dann nicht neu starten,
-    // damit ein Flackern anderer Verbindungen die Schonfrist nicht verlaengert.
+    // TURN_MS=0 schaltet die Zug-Uhr fuer verbundene Spieler ab.
+    if (seat.connected && TURN_MS <= 0 && !immediate) {
+      clearAutoAct(room);
+      return;
+    }
+    // Laeuft bereits ein Timer fuer genau diesen Zug? Dann nicht neu starten,
+    // damit unzusammenhaengende Broadcasts die Uhr nicht zuruecksetzen.
     if (room.autoActTimer && room.autoActFor === t.toAct && !immediate) return;
     clearAutoAct(room);
+    const ms = immediate ? 0 : seat.connected ? TURN_MS : DISCONNECT_GRACE_MS;
     room.autoActFor = t.toAct;
+    room.turnDeadline = Date.now() + ms;
+    room.turnTotalMs = ms;
     room.autoActTimer = setTimeout(() => {
       room.autoActTimer = null;
       room.autoActFor = null;
+      room.turnDeadline = null;
+      room.turnTotalMs = null;
       try {
         if (!rooms.has(room.code) || !room.table) return;
-        const acted = autoActDisconnected(room);
+        const acted = autoActOnTimeout(room);
         if (acted) {
           broadcast(room);
           maybeDriveRunout(room);
         }
-        // Falls der naechste Spieler ebenfalls getrennt ist: erneut planen.
+        // Naechsten Spieler einplanen (eigene Uhr).
         scheduleAutoAct(room);
       } catch (e) {
         // Auto-Act-Fehler nicht eskalieren lassen (wuerde sonst crashen).
         logError('scheduleAutoAct', e);
       }
-    }, immediate ? 0 : DISCONNECT_GRACE_MS);
+    }, ms);
   }
 
   // Reconnect: derselbe Token kehrt zu seinem Sitzplatz zurueck.
@@ -515,11 +547,13 @@ io.on('connection', (socket) => {
     socket.join(code);
     cancelCleanup(room);
     cb?.({ ok: true, code });
+    // Reconnect: laufende (kurze) Schonfrist verwerfen und die Zug-Uhr frisch
+    // planen (volle Bedenkzeit) – VOR dem Broadcast, damit turnMsLeft stimmt.
+    clearAutoAct(room);
+    scheduleAutoAct(room);
     broadcast(room);
     sendChatHistory(socket, room);
     sendProfile(socket, token, seat.name);
-    // Reconnect: Auto-Act neu bewerten (ggf. Schonfrist abbrechen).
-    scheduleAutoAct(room);
   });
 
   onSafe('startHand', () => {
@@ -531,9 +565,10 @@ io.on('connection', (socket) => {
     if (!room.table) return;
     const res = room.table.startHand();
     if (res?.error) socket.emit('errorMsg', res.error);
+    // Zug-Uhr VOR dem Broadcast setzen, damit turnMsLeft mitgesendet wird.
+    scheduleAutoAct(room);
     broadcast(room);
     maybeDriveRunout(room);
-    scheduleAutoAct(room);
   });
 
   onSafe('rematch', () => {
@@ -583,9 +618,10 @@ io.on('connection', (socket) => {
     if (!seat) return;
     const res = room.table.act(seat.token, type, amount);
     if (res?.error) socket.emit('errorMsg', res.error);
+    // Zug-Uhr fuer den naechsten Spieler VOR dem Broadcast setzen.
+    scheduleAutoAct(room);
     broadcast(room);
     maybeDriveRunout(room);
-    scheduleAutoAct(room);
   });
 
   // Tisch-Chat: kurze Nachrichten zwischen den Spielern am Tisch.
@@ -624,9 +660,9 @@ io.on('connection', (socket) => {
       destroyRoom(room);
       return;
     }
-    broadcast(room);
     // Bewusstes Verlassen am Zug: sofort automatisch handeln (kein Warten).
     scheduleAutoAct(room, true);
+    broadcast(room);
     maybeScheduleCleanup(room);
   });
 
@@ -635,9 +671,9 @@ io.on('connection', (socket) => {
     if (!room) return;
     const seat = seatBySocket(room, socket.id);
     if (seat) seat.connected = false;
-    broadcast(room);
-    // Falls der getrennte Spieler am Zug ist: nach Schonfrist automatisch handeln.
+    // Falls der getrennte Spieler am Zug ist: Schonfrist-Uhr vor dem Broadcast setzen.
     scheduleAutoAct(room);
+    broadcast(room);
     maybeScheduleCleanup(room);
   });
 });

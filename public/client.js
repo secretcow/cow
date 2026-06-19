@@ -1251,6 +1251,19 @@ function buildSeat(s, p, isMe, animate, revealAnim) {
     if (equity) seat.appendChild(equity);
     seat.appendChild(info);
   }
+
+  // Zug-Countdown: depletierender Balken am Sitz des Spielers am Zug. Dauer aus
+  // turnMsLeft (nicht Teil der Sitz-Signatur, damit er waehrend des Zugs
+  // ununterbrochen durchlaeuft und nicht bei jedem Broadcast neu startet).
+  if (!replayMode && p.id === s.toActId && typeof s.turnMsLeft === 'number' && s.turnMsLeft > 0) {
+    const timer = document.createElement('div');
+    timer.className = 'turn-timer';
+    const fill = document.createElement('div');
+    fill.className = 'turn-timer-fill';
+    fill.style.animationDuration = `${s.turnMsLeft}ms`;
+    timer.appendChild(fill);
+    seat.appendChild(timer);
+  }
   return seat;
 }
 
