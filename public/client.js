@@ -928,6 +928,16 @@ const OPP_SLOTS = {
   4: [[8, 34], [30, 8], [70, 8], [92, 34]],
   5: [[7, 36], [25, 8], [50, 4], [75, 8], [93, 36]],
 };
+// Schmaler Bildschirm: Eck-Sitze nach innen ziehen und obere Reihe etwas tiefer,
+// damit nichts ueber den Tischrand hinausragt (sonst werden Sitze abgeschnitten).
+const OPP_SLOTS_MOBILE = {
+  0: [],
+  1: [[50, 9]],
+  2: [[18, 22], [82, 22]],
+  3: [[16, 38], [50, 9], [84, 38]],
+  4: [[14, 32], [33, 10], [67, 10], [86, 32]],
+  5: [[13, 34], [30, 10], [50, 7], [70, 10], [87, 34]],
+};
 
 function cardEl(card) {
   const el = document.createElement('div');
@@ -1099,7 +1109,10 @@ function renderSeats(s, animate, revealAnim) {
   // Reihenfolge der Gegner: ab dem Sitz nach mir, im Uhrzeigersinn.
   const opps = [];
   for (let k = 1; k < n; k++) opps.push(s.players[(meIdx + k) % n]);
-  const slots = OPP_SLOTS[opps.length] || OPP_SLOTS[5];
+  // Auf schmalen Bildschirmen (Handy, Tablet, schmales Fenster) engere
+  // Sitz-Positionen verwenden, damit nichts ueber den Rand hinausragt.
+  const slotTable = window.innerWidth <= 820 ? OPP_SLOTS_MOBILE : OPP_SLOTS;
+  const slots = slotTable[opps.length] || slotTable[5];
 
   const seen = new Set();
   // Baut den Sitz nur neu, wenn sich seine Signatur geaendert hat; Position wird
@@ -1673,6 +1686,16 @@ document.addEventListener('keydown', (e) => {
       render(lastState);
     }
   }
+});
+
+// Bildschirm-Drehung/Groessenaenderung: Sitze neu positionieren (mobile vs. breite
+// Slot-Tabelle). Entprellt; nicht waehrend eines Replays (wuerde es schliessen).
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (lastState && !replayMode && !$('game').classList.contains('hidden')) render(lastState);
+  }, 150);
 });
 
 // Tisch verlassen -> zurueck zur Lobby. Loescht den gemerkten Raum, damit kein
