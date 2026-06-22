@@ -83,6 +83,12 @@ const I18N = {
     lbMatches: (n) => `${n} ${n === 1 ? 'Match' : 'Matches'}`,
     walletTitle: 'Guthaben',
     matchesTitle: 'Gewonnene Matches',
+    statsTitle: '📊 Deine Statistik',
+    statHandsPlayed: 'Hände gespielt',
+    statHandsWon: 'Hände gewonnen',
+    statWinRate: 'Gewinnrate',
+    statBiggestPot: 'Größter Pot',
+    statMatchesWon: 'Matches gewonnen',
     ranksTitle: 'Rangfolge',
     cardsTitle: 'Karten',
     suitsTitle: 'Farben',
@@ -209,6 +215,12 @@ const I18N = {
     lbMatches: (n) => `${n} ${n === 1 ? 'match' : 'matches'}`,
     walletTitle: 'Balance',
     matchesTitle: 'Matches won',
+    statsTitle: '📊 Your stats',
+    statHandsPlayed: 'Hands played',
+    statHandsWon: 'Hands won',
+    statWinRate: 'Win rate',
+    statBiggestPot: 'Biggest pot',
+    statMatchesWon: 'Matches won',
     ranksTitle: 'Hand ranking',
     cardsTitle: 'Cards',
     suitsTitle: 'Suits',
@@ -597,6 +609,47 @@ function renderProfile() {
   $('pbMatches').textContent = myProfile.matchesWon ?? 0;
   $('pbWallet').parentElement.title = t('walletTitle');
   $('pbMatches').parentElement.title = t('matchesTitle');
+  renderStats();
+  renderTableStat();
+}
+
+// Kompakte Statistik-Anzeige am Tisch (Topbar): Gewinnrate, sobald Hände gespielt.
+function renderTableStat() {
+  const el = $('tableStat');
+  if (!el || !myProfile) return;
+  const played = myProfile.handsPlayed ?? 0;
+  if (played <= 0) {
+    el.classList.add('hidden');
+    return;
+  }
+  const rate = Math.round(((myProfile.handsWon ?? 0) / played) * 100);
+  el.textContent = `📈 ${rate}% · ${played}`;
+  el.title = `${t('statWinRate')} ${rate}% · ${t('statHandsPlayed')} ${played}`;
+  el.classList.remove('hidden');
+}
+
+// Detail-Statistik im aufklappbaren Panel (Lobby).
+function renderStats() {
+  const box = $('statsBox');
+  const body = $('statsBody');
+  if (!box || !body || !myProfile) return;
+  const played = myProfile.handsPlayed ?? 0;
+  const won = myProfile.handsWon ?? 0;
+  const rate = played > 0 ? Math.round((won / played) * 100) : 0;
+  const rows = [
+    ['🃏', t('statHandsPlayed'), played.toLocaleString()],
+    ['🏅', t('statHandsWon'), won.toLocaleString()],
+    ['📈', t('statWinRate'), `${rate}%`],
+    ['💰', t('statBiggestPot'), `${(myProfile.biggestPot ?? 0).toLocaleString()} 🪙`],
+    ['🏆', t('statMatchesWon'), (myProfile.matchesWon ?? 0).toLocaleString()],
+  ];
+  body.innerHTML = rows
+    .map(
+      ([icon, label, val]) =>
+        `<div class="stat-row"><span class="stat-label"><span class="stat-ico">${icon}</span>${escapeHtml(label)}</span><span class="stat-val">${escapeHtml(val)}</span></div>`
+    )
+    .join('');
+  box.classList.remove('hidden');
 }
 
 // ---------- Bestenliste ----------

@@ -77,6 +77,18 @@ body {
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 .lb-row:last-child { border-bottom: none; }
+
+/* Persoenliche Statistik (Lobby-Panel) */
+.stats-box.hidden { display: none; }
+.stats-body { margin-top: 10px; }
+.stat-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 4px; border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.stat-row:last-child { border-bottom: none; }
+.stat-label { display: flex; align-items: center; gap: 8px; color: #dfe7e1; font-weight: 600; }
+.stat-ico { font-size: 1rem; }
+.stat-val { font-weight: 800; color: var(--gold); }
 .lb-rank { width: 28px; text-align: center; font-weight: 700; }
 .lb-name { flex: 1; font-weight: 600; color: #eee; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lb-matches { color: var(--gold); font-size: 0.82rem; font-variant-numeric: tabular-nums; }
@@ -325,6 +337,12 @@ input { font: inherit; }
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 .blind-info.hidden { display: none; }
+.stat-chip {
+  white-space: nowrap; font-size: 0.72rem; font-weight: 700; color: #cfe7d8;
+  background: rgba(0, 0, 0, 0.45); padding: 4px 10px; border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.stat-chip.hidden { display: none; }
 .replay-bar {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   z-index: 6; display: flex; align-items: center; gap: 6px;

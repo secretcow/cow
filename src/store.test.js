@@ -53,6 +53,17 @@ assert('Leaderboard hat 2 Eintraege', lb.length === 2);
 assert('Anna fuehrt mit 2 Matches', lb[0].name === 'Anna' && lb[0].matchesWon === 2);
 assert('Ben zweiter mit 1 Match', lb[1].name === 'Ben' && lb[1].matchesWon === 1);
 
+// Hand-Statistik: gespielte/gewonnene Haende + groesster Pot
+await store.loadProfile('tokC', 'Cara');
+await store.recordHandStats('tokC', 'Cara', { won: false }); // gespielt, nicht gewonnen
+const c1 = await store.recordHandStats('tokC', 'Cara', { won: true, potSize: 300 });
+assert('handsPlayed zaehlt alle Haende', c1.handsPlayed === 2);
+assert('handsWon zaehlt nur Siege', c1.handsWon === 1);
+assert('biggestPot gesetzt', c1.biggestPot === 300);
+const c2 = await store.recordHandStats('tokC', 'Cara', { won: true, potSize: 120 });
+assert('handsPlayed weiter erhoeht', c2.handsPlayed === 3);
+assert('biggestPot bleibt Maximum', c2.biggestPot === 300);
+
 // Persistenz: Datei wurde geschrieben (debounced -> kurz warten)
 await new Promise((r) => setTimeout(r, 400));
 assert('Datei existiert', fs.existsSync(tmp));

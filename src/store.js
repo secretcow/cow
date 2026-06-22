@@ -26,6 +26,7 @@ function defaultProfile(token, name) {
     name: name || 'Spieler',
     wallet: STARTING_WALLET,
     matchesWon: 0,
+    handsPlayed: 0,
     handsWon: 0,
     biggestPot: 0,
     createdAt: Date.now(),
@@ -172,6 +173,21 @@ export async function recordHandWin(token, name, potSize) {
   if (name) p.name = name;
   p.handsWon = (p.handsWon || 0) + 1;
   if (potSize > (p.biggestPot || 0)) p.biggestPot = potSize;
+  await safePut(p);
+  return p;
+}
+
+// Schreibt die Hand-Statistik fuer einen Teilnehmer in EINEM Schreibvorgang:
+// jede gespielte Hand zaehlt; gewonnene Haende erhoehen handsWon und ggf.
+// biggestPot. Gibt das aktualisierte Profil zurueck.
+export async function recordHandStats(token, name, { won = false, potSize = 0 } = {}) {
+  const p = (await safeGet(token)) || defaultProfile(token, name);
+  if (name) p.name = name;
+  p.handsPlayed = (p.handsPlayed || 0) + 1;
+  if (won) {
+    p.handsWon = (p.handsWon || 0) + 1;
+    if (potSize > (p.biggestPot || 0)) p.biggestPot = potSize;
+  }
   await safePut(p);
   return p;
 }

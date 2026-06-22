@@ -8,6 +8,7 @@ import {
   loadProfile,
   adjustWallet,
   recordMatchWin,
+  recordHandStats,
   getLeaderboard,
   storeInfo,
 } from './src/store.js';
@@ -217,6 +218,7 @@ function broadcast(room) {
       io.to(p.socketId).emit('lobby', lob);
     }
   }
+  recordHandIfOver(room);
   checkMatchOver(room);
 }
 
@@ -225,6 +227,7 @@ function publicProfile(p) {
     name: p.name,
     wallet: p.wallet || 0,
     matchesWon: p.matchesWon || 0,
+    handsPlayed: p.handsPlayed || 0,
     handsWon: p.handsWon || 0,
     biggestPot: p.biggestPot || 0,
   };
@@ -286,6 +289,29 @@ function destroyRoom(room) {
     room.runoutTimer = null;
   }
   rooms.delete(room.code);
+}
+
+// Erkennt das Ende einer Hand und schreibt jedem Teilnehmer genau einmal die
+// Hand-Statistik gut (gespielt; Gewinner zusaetzlich gewonnen + groesster Pot).
+// Die Teilnehmer werden beim Austeilen festgehalten (room.handParticipants).
+function recordHandIfOver(room) {
+  const t = room.table;
+  if (!t || t.stage !== 'handover' || room.handRecorded || !t.result) return;
+  room.handRecorded = true;
+  const winners = new Set(t.result.winners || []);
+  const pot = t.result.pot || 0;
+  for (const part of room.handParticipants || []) {
+    const won = winners.has(part.seat);
+    recordHandStats(part.token, part.name, { won, potSize: won ? pot : 0 })
+      .then((p) => {
+        // Aktualisierte Statistik live an den (verbundenen) Spieler schicken.
+        const seat = room.players.find((x) => x.token === part.token);
+        if (seat?.connected && seat.socketId) {
+          io.to(seat.socketId).emit('profile', publicProfile(p));
+        }
+      })
+      .catch((e) => console.error('recordHandStats:', e.message));
+  }
 }
 
 // Erkennt den Uebergang zu "Match beendet" und schreibt den Sieg dem Gewinner
@@ -360,6 +386,8 @@ io.on('connection', (socket) => {
       turnTotalMs: null, // Gesamtdauer der aktuellen Zug-Uhr
       chat: [],
       matchRecorded: false,
+      handRecorded: false, // Hand-Statistik dieser Hand schon geschrieben?
+      handParticipants: [], // Teilnehmer der aktuellen Hand (fuer Statistik)
     };
     rooms.set(code, room);
     socket.data.code = code;
@@ -565,6 +593,15 @@ io.on('connection', (socket) => {
     if (!room.table) return;
     const res = room.table.startHand();
     if (res?.error) socket.emit('errorMsg', res.error);
+    if (!res?.error) {
+      // Teilnehmer dieser Hand festhalten (wer ausgeteilt bekam) – fuer die
+      // Hand-Statistik am Rundenende. Engine-Index == room.players-Index.
+      room.handRecorded = false;
+      room.handParticipants = room.players
+        .map((p, i) => ({ token: p.token, name: p.name, seat: i, inHand: room.table.players[i]?.inHand }))
+        .filter((x) => x.inHand)
+        .map(({ token, name, seat }) => ({ token, name, seat }));
+    }
     // Zug-Uhr VOR dem Broadcast setzen, damit turnMsLeft mitgesendet wird.
     scheduleAutoAct(room);
     broadcast(room);
