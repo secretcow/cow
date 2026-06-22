@@ -326,9 +326,15 @@ input { font: inherit; }
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   display: flex; flex-direction: column; align-items: center; gap: 10px; width: 90%;
 }
-.pot { background: rgba(0, 0, 0, 0.5); padding: 5px 18px; border-radius: 999px; font-weight: 700; color: var(--gold); font-size: 1.05rem; }
-.community { display: flex; gap: 6px; min-height: 80px; }
-.stage-label { font-size: 0.85rem; color: #cfe7d8; letter-spacing: 2px; text-transform: uppercase; }
+.pot { position: relative; z-index: 2; background: rgba(0, 0, 0, 0.5); padding: 5px 18px; border-radius: 999px; font-weight: 700; color: var(--gold); font-size: 1.05rem; }
+.community { position: relative; z-index: 2; display: flex; gap: 6px; min-height: 80px; }
+/* Strassen-Name als dezenter Wasserzeichen-Schriftzug hinter dem Board – aus dem
+   Fluss genommen, damit die Mitte kompakt bleibt und nichts ueberlappt. */
+.stage-label {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 0; opacity: 0.4; pointer-events: none;
+  font-size: 1rem; color: #cfe7d8; letter-spacing: 3px; text-transform: uppercase; font-weight: 700;
+}
 .blind-info {
   white-space: nowrap; text-align: center;
   font-size: 0.74rem; font-weight: 700; color: #ffd86b;
@@ -353,7 +359,7 @@ input { font: inherit; }
 .replay-bar .btn { padding: 4px 9px; font-size: 0.85rem; }
 .replay-tag { font-size: 0.72rem; font-weight: 800; color: #ffd86b; letter-spacing: 0.5px; padding: 0 4px; }
 .replay-pos { font-size: 0.74rem; font-weight: 700; color: #cfe7d8; min-width: 38px; text-align: center; }
-.result-banner { font-size: 1.1rem; font-weight: 800; padding: 8px 20px; border-radius: 10px; background: rgba(0, 0, 0, 0.6); text-align: center; }
+.result-banner { position: relative; z-index: 2; font-size: 1.1rem; font-weight: 800; padding: 8px 20px; border-radius: 10px; background: rgba(0, 0, 0, 0.6); text-align: center; }
 .result-banner.win { background: var(--win); color: #062a13; }
 .result-banner.lose { background: #7a2820; }
 .result-banner.split {
@@ -377,6 +383,7 @@ input { font: inherit; }
 
 /* ===== Rundenende-Detail (Gewinnhand + Split-Pot) ===== */
 .result-detail {
+  position: relative; z-index: 2;
   margin-top: 10px; display: flex; flex-direction: column; gap: 10px;
   align-items: center; width: 100%;
 }

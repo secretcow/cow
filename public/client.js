@@ -1054,7 +1054,10 @@ function render(s) {
   renderCommunity(s);
 
   $('pot').textContent = t('pot', s.pot);
-  $('stageLabel').textContent = t('stages')[s.stage] || s.stage;
+  // Strassen-Wasserzeichen nur waehrend aktiver Strassen; am Rundenende zeigt die
+  // Mitte das Ergebnis-Banner – dann kein Wasserzeichen dahinter.
+  const showStage = !['idle', 'showdown', 'handover'].includes(s.stage);
+  $('stageLabel').textContent = showStage ? t('stages')[s.stage] || s.stage : '';
   renderBlindInfo(s);
 
   renderResult(s, me);
