@@ -22,6 +22,25 @@ const ANIMALS = {
   9: { de: 'Kuh', en: 'Cow', value: 800, emoji: '🐄' },
   10: { de: 'Pferd', en: 'Horse', value: 1000, emoji: '🐎' },
 };
+// Brainrot-Modus (reines Anzeige-Skin, gleiche Werte/Ränge). Namen sind in DE/EN
+// identisch (Eigennamen). Wird per Client-Toggle aktiviert (kein Serverumbau).
+const BRAINROT = {
+  1: { de: 'Boneca Ambalabu', en: 'Boneca Ambalabu', value: 10, emoji: '🐸' },
+  2: { de: 'Trippi Troppi', en: 'Trippi Troppi', value: 40, emoji: '🦐' },
+  3: { de: 'Chimpanzini Bananini', en: 'Chimpanzini Bananini', value: 90, emoji: '🍌' },
+  4: { de: 'Brr Brr Patapim', en: 'Brr Brr Patapim', value: 160, emoji: '🌳' },
+  5: { de: 'Cappuccino Assassino', en: 'Cappuccino Assassino', value: 250, emoji: '☕' },
+  6: { de: 'Lirilì Larilà', en: 'Lirilì Larilà', value: 350, emoji: '🌵' },
+  7: { de: 'Bombombini Gusini', en: 'Bombombini Gusini', value: 500, emoji: '🪿' },
+  8: { de: 'Tung Tung Tung Sahur', en: 'Tung Tung Tung Sahur', value: 650, emoji: '🪵' },
+  9: { de: 'Bombardiro Crocodilo', en: 'Bombardiro Crocodilo', value: 800, emoji: '🐊' },
+  10: { de: 'Tralalero Tralala', en: 'Tralalero Tralala', value: 1000, emoji: '🦈' },
+};
+let brainrotMode = localStorage.getItem('kuhpoker_brainrot') === '1';
+// Liefert den aktuell gewählten Karten-Satz (Tier oder Brainrot) für einen Rang.
+function deck(rank) {
+  return (brainrotMode ? BRAINROT : ANIMALS)[rank];
+}
 const SUITS = [
   { de: 'Sonne', en: 'Sun', color: '#f5b50a', symbol: '☀' },
   { de: 'Mond', en: 'Moon', color: '#5a8fe6', symbol: '☾' },
@@ -62,6 +81,8 @@ const I18N = {
     tourneyHint:
       'An: Turnier mit steigenden Blinds — alle paar Hände werden Small/Big Blind höher. Aus: Blinds bleiben konstant bei 10/20.',
     cashMode: 'Cash-Game',
+    brainrotMode: '🧠 Brainrot-Modus',
+    brainrotHint: 'Nur Anzeige: zeigt die Karten als Brainrot-Charaktere (🦈 Tralalero Tralala … 🐸 Boneca Ambalabu) statt Tiere. Gilt sofort, auch im laufenden Spiel.',
     cashHint:
       'An: Buy-in aus deinem Guthaben — busten beendet das Spiel nicht, du kannst nachkaufen (Rebuy). Beim Verlassen gehen deine Chips zurück aufs Guthaben (Cash-out).',
     cashHintOn: (buy) => `An: Buy-in ${buy.toLocaleString()} 🪙 aus deinem Guthaben. Rebuy jederzeit zwischen den Händen, Cash-out beim Verlassen.`,
@@ -199,6 +220,8 @@ const I18N = {
     tourneyHint:
       'On: tournament with rising blinds — small/big blind go up every few hands. Off: blinds stay constant at 10/20.',
     cashMode: 'Cash game',
+    brainrotMode: '🧠 Brainrot mode',
+    brainrotHint: 'Display only: shows the cards as Brainrot characters (🦈 Tralalero Tralala … 🐸 Boneca Ambalabu) instead of animals. Applies instantly, even mid-game.',
     cashHint:
       'On: buy in from your balance — busting does not end the game, you can rebuy. When you leave, your chips return to your balance (cash-out).',
     cashHintOn: (buy) => `On: buy-in ${buy.toLocaleString()} 🪙 from your balance. Rebuy any time between hands, cash-out when you leave.`,
@@ -330,11 +353,10 @@ function streetName(l, s) {
   return { flop: 'Flop', turn: 'Turn', river: 'River' }[s] || s;
 }
 function animalName(l, rank) {
-  return ANIMALS[rank][l];
+  return deck(rank)[l];
 }
 function cardWords(l, c) {
-  const a = ANIMALS[c.rank];
-  return a[l];
+  return deck(c.rank)[l];
 }
 function catName(l, code, flush) {
   const id = (flush ? CAT_IDS_FLUSH : CAT_IDS_NOFLUSH)[code];
@@ -390,9 +412,9 @@ function buildSidePanels(flush) {
   if (cardBody) {
     const animals = Object.keys(ANIMALS)
       .map(Number)
-      .sort((a, b) => b - a) // Pferd (1000) oben, Hahn (10) unten
+      .sort((a, b) => b - a) // höchste Karte oben, niedrigste unten
       .map((r) => {
-        const a = ANIMALS[r];
+        const a = deck(r);
         return `<div class="cardref-row"><span class="cardref-emoji">${a.emoji}</span><span class="cardref-name">${escapeHtml(a[lang])}</span><span class="cardref-val">${a.value}</span></div>`;
       })
       .join('');
@@ -429,6 +451,10 @@ function applyStatic() {
   $('nameInput').placeholder = t('namePlaceholder');
   $('codeInput').placeholder = t('codePlaceholder');
   $('rulesBody').innerHTML = t('rulesHtml', createOpts.flush);
+  // Brainrot-Toggle auf den gespeicherten Zustand setzen.
+  const bseg = $('brainrotSeg');
+  if (bseg) segActivate('brainrotSeg', bseg.querySelector(`[data-val="${brainrotMode ? 'on' : 'off'}"]`));
+  document.body.classList.toggle('brainrot', brainrotMode);
   if ($('chatInput')) $('chatInput').placeholder = t('chatPlaceholder');
   if ($('chatSend')) $('chatSend').textContent = t('send');
   // Lang-Buttons markieren
@@ -517,6 +543,25 @@ if (cashSeg) {
 function updateCashHint() {
   const hint = $('cashHint');
   if (hint) hint.textContent = createOpts.cash ? t('cashHintOn', createOpts.startingStack) : t('cashHint');
+}
+// Brainrot-Modus: reiner Anzeige-Toggle (Client-Pref), kein Serverumbau.
+if ($('brainrotSeg')) {
+  $('brainrotSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    setBrainrotMode(b.dataset.val === 'on');
+  });
+}
+function setBrainrotMode(on) {
+  brainrotMode = !!on;
+  localStorage.setItem('kuhpoker_brainrot', brainrotMode ? '1' : '0');
+  document.body.classList.toggle('brainrot', brainrotMode); // längere Namen -> kleinere Schrift
+  const seg = $('brainrotSeg');
+  if (seg) segActivate('brainrotSeg', seg.querySelector(`[data-val="${brainrotMode ? 'on' : 'off'}"]`));
+  // Alle Karten neu zeichnen (Lobby-Übersicht + laufender Tisch).
+  buildSidePanels(lastState ? lastState.flush : panelFlush);
+  invalidateRenderCaches();
+  if (lastState) render(lastState);
 }
 $('levelHandsSeg').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -1113,10 +1158,10 @@ function cardEl(card) {
   const el = document.createElement('div');
   if (!card) {
     el.className = 'card back';
-    el.innerHTML = '<div class="back-pattern">🐄</div>';
+    el.innerHTML = `<div class="back-pattern">${brainrotMode ? '🦈' : '🐄'}</div>`;
     return el;
   }
-  const a = ANIMALS[card.rank];
+  const a = deck(card.rank);
   const suit = SUITS[card.suit ?? card.copy ?? 0];
   el.className = 'card';
   el.style.setProperty('--suit', suit.color);
@@ -1130,7 +1175,7 @@ function cardEl(card) {
 
 function miniCardHtml(c) {
   if (!c) return '';
-  const a = ANIMALS[c.rank];
+  const a = deck(c.rank);
   const suit = SUITS[c.suit ?? c.copy ?? 0];
   return `<span class="mini-card" style="--suit:${suit.color}"><span class="mini-emoji">${a.emoji}</span><span class="mini-val">${a.value}</span><span class="mini-suit">${suit.symbol}</span></span>`;
 }

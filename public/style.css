@@ -352,6 +352,9 @@ input { font: inherit; }
 .card-corner .suit { font-size: 0.72rem; }
 .card-emoji { font-size: 1.7rem; line-height: 1; }
 .card-name { font-size: 0.62rem; color: #555; }
+/* Brainrot-Namen sind lang -> etwas kleiner und enger, damit sie sauber passen. */
+body.brainrot .card-name { font-size: 0.5rem; line-height: 1.04; }
+body.brainrot .cardref-name { font-size: 0.82rem; }
 .card.back {
   background: repeating-linear-gradient(45deg, #6b3f1d, #6b3f1d 8px, #7a4a26 8px, #7a4a26 16px);
   border: 2px solid #a06a35; border-top: 4px solid #a06a35;
