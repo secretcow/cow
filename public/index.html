@@ -126,6 +126,7 @@
           <button class="lang-btn small-lang" id="gameLangBtn">DE</button>
           <button id="ranksBtn" class="btn small" title="Rangfolge">📊</button>
           <button id="cardsBtn" class="btn small" title="Karten">🃏</button>
+          <button id="historyBtn" class="btn small" title="Hand-Historie">📜</button>
           <button id="emoteBtn" class="btn small" title="Emote">😊</button>
           <button id="muteBtn" class="btn small" title="Ton">🔊</button>
           <button id="leaveBtn" class="btn small" title="Verlassen">🚪</button>
@@ -147,6 +148,13 @@
           <button class="side-close" data-panel="cardPanel">✕</button>
         </div>
         <div class="side-body" id="cardBody"></div>
+      </aside>
+      <aside class="side-panel right collapsed" id="historyPanel">
+        <div class="side-head">
+          <span data-i18n="historyTitle"></span>
+          <button class="side-close" data-panel="historyPanel">✕</button>
+        </div>
+        <div class="side-body" id="historyBody"></div>
       </aside>
 
       <div class="table">

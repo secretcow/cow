@@ -91,6 +91,9 @@ const I18N = {
     statMatchesWon: 'Matches gewonnen',
     ranksTitle: 'Rangfolge',
     cardsTitle: 'Karten',
+    historyTitle: '📜 Hand-Historie',
+    historyEmpty: 'Noch keine Hände gespielt.',
+    histFold: '🏳️ Fold',
     suitsTitle: 'Farben',
     strong: 'stark',
     weak: 'schwach',
@@ -223,6 +226,9 @@ const I18N = {
     statMatchesWon: 'Matches won',
     ranksTitle: 'Hand ranking',
     cardsTitle: 'Cards',
+    historyTitle: '📜 Hand history',
+    historyEmpty: 'No hands played yet.',
+    histFold: '🏳️ Fold',
     suitsTitle: 'Suits',
     strong: 'strong',
     weak: 'weak',
@@ -398,6 +404,17 @@ function togglePanel(id) {
   if (el) el.classList.toggle('collapsed');
 }
 
+// Oeffnet genau ein Referenz-Panel (klappt das geklickte um, schliesst die
+// anderen) – verhindert, dass sich zwei Panels auf derselben Seite ueberlagern.
+function openOnlyPanel(id) {
+  for (const pid of ['rankPanel', 'cardPanel', 'historyPanel']) {
+    const el = $(pid);
+    if (!el) continue;
+    if (pid === id) el.classList.toggle('collapsed');
+    else el.classList.add('collapsed');
+  }
+}
+
 // ---------- Statische Übersetzung anwenden ----------
 function applyStatic() {
   document.documentElement.lang = lang;
@@ -418,6 +435,7 @@ function applyStatic() {
   buildSidePanels(lastState ? lastState.flush : panelFlush);
   if (typeof updateCashHint === 'function') updateCashHint();
   if (typeof renderProfile === 'function') renderProfile();
+  if (typeof renderHandHistory === 'function') renderHandHistory();
   if ($('leaderboardBox')?.open) loadLeaderboard();
   if (lastLobby) renderLobby(lastLobby);
   // Render-Caches verwerfen, damit Sitze/Log in der neuen Sprache neu gebaut werden.
@@ -435,9 +453,10 @@ document.querySelectorAll('.lang-btn[data-lang]').forEach((b) => {
 });
 $('gameLangBtn').onclick = () => setLang(lang === 'de' ? 'en' : 'de');
 
-// Referenz-Panels ein-/ausklappen.
-$('ranksBtn').onclick = () => togglePanel('rankPanel');
-$('cardsBtn').onclick = () => togglePanel('cardPanel');
+// Referenz-Panels ein-/ausklappen (immer nur eines offen).
+$('ranksBtn').onclick = () => openOnlyPanel('rankPanel');
+$('cardsBtn').onclick = () => openOnlyPanel('cardPanel');
+if ($('historyBtn')) $('historyBtn').onclick = () => openOnlyPanel('historyPanel');
 document.querySelectorAll('.side-close').forEach((b) => {
   b.onclick = () => togglePanel(b.dataset.panel);
 });
@@ -731,6 +750,36 @@ socket.on('emote', ({ seat, emote }) => {
   if (replayMode) return; // Live-Emotes nicht ueber ein laufendes Replay legen
   showEmotePop(seat, emote);
 });
+
+// ---------- Hand-Historie ----------
+let handHistory = [];
+socket.on('handHistory', (h) => {
+  handHistory = Array.isArray(h) ? h : [];
+  renderHandHistory();
+});
+function renderHandHistory() {
+  const body = $('historyBody');
+  if (!body) return;
+  if (!handHistory.length) {
+    body.innerHTML = `<div class="hist-empty">${escapeHtml(t('historyEmpty'))}</div>`;
+    return;
+  }
+  const flush = lastState ? lastState.flush : false;
+  body.innerHTML = handHistory
+    .slice()
+    .reverse() // neueste Hand oben
+    .map((h) => {
+      const names = (h.winners || []).join(', ');
+      const tag = h.reason === 'fold' ? t('histFold') : catName(lang, h.cat, flush) || '';
+      return (
+        `<div class="hist-row"><span class="hist-hand">#${h.hand}</span>` +
+        `<div class="hist-mid"><span class="hist-win">${escapeHtml(names)}</span>` +
+        `<span class="hist-cat">${escapeHtml(tag)}</span></div>` +
+        `<span class="hist-pot">${(h.pot || 0).toLocaleString()} 🪙</span></div>`
+      );
+    })
+    .join('');
+}
 
 // Kurzlebige Emote-Blase ueber dem Sitz des Absenders (fixe Overlay-Ebene,
 // entkoppelt vom Reconciliation-Rendering der Sitze).

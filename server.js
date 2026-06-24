@@ -129,6 +129,7 @@ const RUNOUT_RIVER_MS = Number(process.env.RUNOUT_RIVER_MS ?? 2400); // extra Sp
 const CHAT_HISTORY = 60; // gespeicherte Chat-Nachrichten pro Raum
 const EMOTES = ['👍', '😂', '😮', '🔥', '😢', '🤔']; // erlaubte Schnell-Reaktionen
 const EMOTE_MIN_MS = 1200; // Mindestabstand zwischen Emotes pro Spieler (Anti-Spam)
+const HAND_HISTORY_MAX = 25; // gespeicherte Hand-Ergebnisse pro Raum
 // Schonfrist, bevor ein getrennter Spieler, der am Zug ist, automatisch
 // checkt/foldet. Verhindert, dass die Hand bei Verbindungsverlust ewig haengt,
 // gibt aber Zeit fuer einen kurzen Reconnect.
@@ -293,6 +294,35 @@ function destroyRoom(room) {
   rooms.delete(room.code);
 }
 
+// Haengt einen Hand-Verlaufseintrag an (Gewinner-Namen, Pot, Grund, Kategorie)
+// und schickt die aktualisierte Historie an den Raum.
+function pushHandHistory(room, result) {
+  const winners = (result.winners || []).map((i) => room.players[i]?.name || '?');
+  let cat = null;
+  if (result.reason === 'showdown' && Array.isArray(result.reveal)) {
+    const w = (result.winners || [])[0];
+    const rev = result.reveal.find((r) => r.i === w);
+    cat = rev && rev.eval && rev.eval.score ? rev.eval.score[0] : null;
+  }
+  room.handHistory.push({
+    hand: room.table.handNo,
+    winners,
+    pot: result.pot || 0,
+    reason: result.reason || 'showdown',
+    cat,
+    split: (result.winners || []).length > 1,
+  });
+  if (room.handHistory.length > HAND_HISTORY_MAX) room.handHistory.shift();
+  io.to(room.code).emit('handHistory', room.handHistory);
+}
+
+// Schickt die aktuelle Hand-Historie an einen einzelnen Socket (Join/Reconnect).
+function sendHandHistory(socket, room) {
+  if (room.handHistory && room.handHistory.length) {
+    socket.emit('handHistory', room.handHistory);
+  }
+}
+
 // Erkennt das Ende einer Hand und schreibt jedem Teilnehmer genau einmal die
 // Hand-Statistik gut (gespielt; Gewinner zusaetzlich gewonnen + groesster Pot).
 // Die Teilnehmer werden beim Austeilen festgehalten (room.handParticipants).
@@ -302,6 +332,7 @@ function recordHandIfOver(room) {
   room.handRecorded = true;
   const winners = new Set(t.result.winners || []);
   const pot = t.result.pot || 0;
+  pushHandHistory(room, t.result);
   for (const part of room.handParticipants || []) {
     const won = winners.has(part.seat);
     recordHandStats(part.token, part.name, { won, potSize: won ? pot : 0 })
@@ -390,6 +421,7 @@ io.on('connection', (socket) => {
       matchRecorded: false,
       handRecorded: false, // Hand-Statistik dieser Hand schon geschrieben?
       handParticipants: [], // Teilnehmer der aktuellen Hand (fuer Statistik)
+      handHistory: [], // letzte Hand-Ergebnisse (Gewinner/Pot/Kategorie)
     };
     rooms.set(code, room);
     socket.data.code = code;
@@ -426,6 +458,7 @@ io.on('connection', (socket) => {
     cb?.({ ok: true, code });
     broadcast(room);
     sendChatHistory(socket, room);
+    sendHandHistory(socket, room);
     sendProfile(socket, token, cleanName(name));
   });
 
@@ -583,6 +616,7 @@ io.on('connection', (socket) => {
     scheduleAutoAct(room);
     broadcast(room);
     sendChatHistory(socket, room);
+    sendHandHistory(socket, room);
     sendProfile(socket, token, seat.name);
   });
 

@@ -78,6 +78,19 @@ body {
 }
 .lb-row:last-child { border-bottom: none; }
 
+/* Hand-Historie (Seiten-Panel) */
+.hist-empty { color: #93a89c; font-size: 0.85rem; padding: 8px 4px; }
+.hist-row {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+  padding: 7px 4px; border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.hist-row:last-child { border-bottom: none; }
+.hist-hand { color: #93a89c; font-weight: 800; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.hist-mid { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.hist-win { color: #eee; font-weight: 700; font-size: 0.86rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-cat { color: #bfe9cd; font-size: 0.74rem; }
+.hist-pot { color: var(--gold); font-weight: 800; font-size: 0.82rem; white-space: nowrap; }
+
 /* Persoenliche Statistik (Lobby-Panel) */
 .stats-box.hidden { display: none; }
 .stats-body { margin-top: 10px; }
