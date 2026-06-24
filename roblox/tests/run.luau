@@ -85,7 +85,7 @@ do
 	end
 	ok(all4, "jeder Rang 1..10 genau 4x im Deck")
 	ok(suitEqCopy, "suit === copy fuer jede Karte")
-	ok(#Cards.ANIMALS == 10 and Cards.ANIMALS[10].value == 1000, "Pferd hat Wert 1000")
+	ok(#Cards.ANIMALS == 10 and Cards.ANIMALS[10].value == 1000, "Tralalero Tralala hat Wert 1000")
 end
 
 print("== HandEval (Flush AUS) ==")
@@ -93,7 +93,7 @@ do
 	expectScore({ C(5), C(5), C(5), C(5), C(9) }, false, { 8, 5, 9 }, "Vierling")
 	expectScore({ C(7), C(7), C(7), C(3), C(3) }, false, { 7, 7, 3 }, "Full House")
 	expectScore({ C(6), C(5), C(4), C(3), C(2) }, false, { 6, 6 }, "Strasse")
-	expectScore({ C(10), C(1), C(2), C(3), C(4) }, false, { 6, 4 }, "Wheel (Pferd-1-2-3-4, High 4)")
+	expectScore({ C(10), C(1), C(2), C(3), C(4) }, false, { 6, 4 }, "Wheel (10-1-2-3-4, High 4)")
 	expectScore({ C(9), C(9), C(9), C(2), C(5) }, false, { 5, 9, 5, 2 }, "Drilling")
 	expectScore({ C(8), C(8), C(3), C(3), C(10) }, false, { 4, 8, 3, 10 }, "Zwei Paare")
 	expectScore({ C(4), C(4), C(9), C(7), C(2) }, false, { 3, 4, 9, 7, 2 }, "Paar")
@@ -313,15 +313,15 @@ do
 			== "Cara raises to 120.",
 		"EN raise"
 	)
-	-- community: Tiernamen, sprachabhaengig
+	-- community: Charakternamen, sprachabhaengig
 	ok(
 		Strings.translateLog("de", { key = "community", street = "flop", cards = { { rank = 1 }, { rank = 9 }, { rank = 10 } } })
-			== "Flop: Hahn, Kuh, Pferd",
+			== "Flop: Boneca Ambalabu, Bombardiro Crocodilo, Tralalero Tralala",
 		"DE community Flop"
 	)
 	ok(
 		Strings.translateLog("en", { key = "community", street = "turn", cards = { { rank = 5 } } })
-			== "Turn: Sheep",
+			== "Turn: Cappuccino Assassino",
 		"EN community Turn"
 	)
 	-- win mit Kategorie (Flush aus): cat 8 = Vierling / Four of a Kind

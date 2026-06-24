@@ -694,18 +694,18 @@ end
 -- über das "?"-Symbol erneut geöffnet werden.
 local TUTORIAL_STEPS = {
 	{
-		emoji = "🐄",
+		emoji = "🦈",
 		titleDe = "Willkommen bei KuhPoker!",
 		titleEn = "Welcome to KuhPoker!",
-		bodyDe = "Das ist Texas Hold'em — aber mit Tierkarten statt Spielkarten. Ziel: Bilde aus deinen Karten und den Tischkarten die beste Pokerhand und gewinne den Pot (die Chips in der Mitte).",
-		bodyEn = "This is Texas Hold'em — but with animal cards instead of a standard deck. Goal: make the best poker hand from your cards plus the table cards and win the pot (the chips in the middle).",
+		bodyDe = "Das ist Texas Hold'em — aber mit Brainrot-Karten statt Spielkarten. Ziel: Bilde aus deinen Karten und den Tischkarten die beste Pokerhand und gewinne den Pot (die Chips in der Mitte).",
+		bodyEn = "This is Texas Hold'em — but with Brainrot cards instead of a standard deck. Goal: make the best poker hand from your cards plus the table cards and win the pot (the chips in the middle).",
 	},
 	{
 		emoji = "🃏",
 		titleDe = "Deine Karten",
 		titleEn = "Your cards",
-		bodyDe = "Zu Beginn jeder Hand bekommst du 2 verdeckte Karten — nur du siehst sie. Ganz wichtig: Höhere Tiere sind stärker (🐓 Hahn = niedrig … 🐎 Pferd = hoch). Es gibt keine Farben, also auch keinen Flush.",
-		bodyEn = "Each hand you get 2 face-down cards — only you see them. Higher animals are stronger (🐓 Rooster = low … 🐎 Horse = high). There are no suits, so no flush.",
+		bodyDe = "Zu Beginn jeder Hand bekommst du 2 verdeckte Karten — nur du siehst sie. Ganz wichtig: Höhere Charaktere sind stärker (🐸 Boneca Ambalabu = niedrig … 🦈 Tralalero Tralala = hoch). Es gibt keine Farben, also auch keinen Flush.",
+		bodyEn = "Each hand you get 2 face-down cards — only you see them. Higher characters are stronger (🐸 Boneca Ambalabu = low … 🦈 Tralalero Tralala = high). There are no suits, so no flush.",
 	},
 	{
 		emoji = "🂠",
@@ -756,7 +756,7 @@ local tutEmoji = Instance.new("TextLabel")
 tutEmoji.Size = UDim2.new(1, 0, 0, 72)
 tutEmoji.Position = UDim2.new(0, 0, 0, 26)
 tutEmoji.BackgroundTransparency = 1
-tutEmoji.Text = "🐄"
+tutEmoji.Text = "🦈"
 tutEmoji.TextSize = 56
 tutEmoji.ZIndex = 102
 tutEmoji.Parent = tutCard
@@ -2705,7 +2705,7 @@ local function mkCard(parent, card, hidden: boolean, animate: boolean)
 		local q = Instance.new("TextLabel")
 		q.Size = UDim2.new(1, 0, 1, 0)
 		q.BackgroundTransparency = 1
-		q.Text = "🐄"
+		q.Text = "🦈"
 		q.TextSize = 28
 		q.TextColor3 = Color3.fromRGB(200, 210, 240)
 		q.Parent = f

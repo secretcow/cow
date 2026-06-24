@@ -112,7 +112,7 @@ local function analyzeRanks(ranks: { number }): RankAnalysis
 	end)
 
 	local isStraight = #distinct == 5 and (distinct[1] - distinct[5] == 4)
-	-- Wheel: das Pferd (10) zaehlt zusaetzlich als niedrigste Karte (10-1-2-3-4).
+	-- Wheel: Rang 10 zaehlt zusaetzlich als niedrigste Karte (10-1-2-3-4).
 	local isWheel = #distinct == 5
 		and distinct[1] == 10
 		and distinct[2] == 4

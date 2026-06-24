@@ -1,6 +1,7 @@
 --!strict
--- Kuhhandel-Tierkarten: 10 Tiere mit aufsteigendem Wert, je 4 Karten im Deck.
--- Fuer Poker zaehlt der "rank" (1..10). Der "value" ist der originale Kuhhandel-Wert.
+-- Brainrot-Karten: 10 Charaktere mit aufsteigendem Wert, je 4 Karten im Deck.
+-- Fuer Poker zaehlt der "rank" (1..10). Der "value" ist der originale Kuhhandel-Wert
+-- (Gameplay unveraendert – nur die Motive sind Italian-Brainrot-Memes statt Tiere).
 --
 -- Faithful Luau port of src/cards.js. Pure logic, no Roblox API dependencies, so
 -- this module runs both inside Roblox (Rojo -> ReplicatedStorage.Shared.Cards) and
@@ -30,17 +31,19 @@ export type Card = {
 
 local Cards = {}
 
+-- Die Charakternamen sind eigennamenhafte Memes – in DE und EN identisch.
+-- Reihenfolge nach "Stärke": Rang 10 (Tralalero Tralala) ist die höchste Karte.
 Cards.ANIMALS = {
-	{ rank = 1, name = "Hahn", nameEn = "Rooster", value = 10, emoji = "🐓" },
-	{ rank = 2, name = "Gans", nameEn = "Goose", value = 40, emoji = "🪿" },
-	{ rank = 3, name = "Katze", nameEn = "Cat", value = 90, emoji = "🐈" },
-	{ rank = 4, name = "Hund", nameEn = "Dog", value = 160, emoji = "🐕" },
-	{ rank = 5, name = "Schaf", nameEn = "Sheep", value = 250, emoji = "🐑" },
-	{ rank = 6, name = "Ziege", nameEn = "Goat", value = 350, emoji = "🐐" },
-	{ rank = 7, name = "Esel", nameEn = "Donkey", value = 500, emoji = "🫏" },
-	{ rank = 8, name = "Schwein", nameEn = "Pig", value = 650, emoji = "🐖" },
-	{ rank = 9, name = "Kuh", nameEn = "Cow", value = 800, emoji = "🐄" },
-	{ rank = 10, name = "Pferd", nameEn = "Horse", value = 1000, emoji = "🐎" },
+	{ rank = 1, name = "Boneca Ambalabu", nameEn = "Boneca Ambalabu", value = 10, emoji = "🐸" },
+	{ rank = 2, name = "Trippi Troppi", nameEn = "Trippi Troppi", value = 40, emoji = "🦐" },
+	{ rank = 3, name = "Chimpanzini Bananini", nameEn = "Chimpanzini Bananini", value = 90, emoji = "🍌" },
+	{ rank = 4, name = "Brr Brr Patapim", nameEn = "Brr Brr Patapim", value = 160, emoji = "🌳" },
+	{ rank = 5, name = "Cappuccino Assassino", nameEn = "Cappuccino Assassino", value = 250, emoji = "☕" },
+	{ rank = 6, name = "Lirilì Larilà", nameEn = "Lirilì Larilà", value = 350, emoji = "🌵" },
+	{ rank = 7, name = "Bombombini Gusini", nameEn = "Bombombini Gusini", value = 500, emoji = "🪿" },
+	{ rank = 8, name = "Tung Tung Tung Sahur", nameEn = "Tung Tung Tung Sahur", value = 650, emoji = "🪵" },
+	{ rank = 9, name = "Bombardiro Crocodilo", nameEn = "Bombardiro Crocodilo", value = 800, emoji = "🐊" },
+	{ rank = 10, name = "Tralalero Tralala", nameEn = "Tralalero Tralala", value = 1000, emoji = "🦈" },
 } :: { Animal }
 
 -- Vier Farben (Suits). Da das Deck genau 4 Exemplare pro Tier hat, bekommt jedes

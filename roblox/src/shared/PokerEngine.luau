@@ -1,5 +1,5 @@
 --!nonstrict
--- Texas Hold'em Engine fuer 2-6 Spieler mit Kuhhandel-Tierkarten.
+-- Texas Hold'em Engine fuer 2-6 Spieler mit Brainrot-Karten.
 -- Faithful Luau port of src/poker.js. Autoritativer Spielzustand: Clients schicken
 -- nur Aktionen, der Server validiert alles. Button-/Blind-Rotation, korrekte
 -- Setzreihenfolge, Side Pots, optionaler Flush-Modus, Turnier- und Cash-Game-Modus.
