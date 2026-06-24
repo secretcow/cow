@@ -74,6 +74,8 @@ const I18N = {
     or: 'oder',
     codePlaceholder: 'CODE',
     join: 'Beitreten',
+    spectate: '👁 Zuschauen',
+    spectatorBadge: '👁 Zuschauer-Modus',
     shareCode: 'Tisch-Code zum Teilen:',
     copyLink: 'Einladungslink kopieren',
     startGame: 'Spiel starten',
@@ -209,6 +211,8 @@ const I18N = {
     or: 'or',
     codePlaceholder: 'CODE',
     join: 'Join',
+    spectate: '👁 Spectate',
+    spectatorBadge: '👁 Spectator mode',
     shareCode: 'Table code to share:',
     copyLink: 'Copy invite link',
     startGame: 'Start game',
@@ -544,6 +548,16 @@ $('joinBtn').onclick = () => {
     rememberRoom(res.code);
   });
 };
+if ($('spectateBtn')) {
+  $('spectateBtn').onclick = () => {
+    const code = $('codeInput').value.trim().toUpperCase();
+    if (!code) return toast(t('enterCode'));
+    socket.emit('spectate', { code }, (res) => {
+      if (res?.error) return toast(res.error);
+      // Bildschirmwechsel passiert ueber die folgenden lobby-/state-Events.
+    });
+  };
+}
 $('startGameBtn').onclick = () => socket.emit('startHand');
 $('copyLinkBtn').onclick = () => {
   const link = `${location.origin}/?code=${myCode}`;
@@ -871,6 +885,13 @@ function renderConnStatus(lob) {
     el.textContent = t('connected');
     el.className = 'conn on';
   }
+  // Zuschauerzahl anzeigen (sobald jemand zusieht).
+  const spec = $('specCount');
+  if (spec) {
+    const n = lob.spectators || 0;
+    spec.textContent = n > 0 ? `👁 ${n}` : '';
+    spec.classList.toggle('hidden', n <= 0);
+  }
 }
 
 // ---------- Sound ----------
@@ -1067,6 +1088,16 @@ const OPP_SLOTS = {
   4: [[8, 34], [30, 8], [70, 8], [92, 34]],
   5: [[7, 36], [25, 8], [50, 4], [75, 8], [93, 36]],
 };
+// Zuschauer-Layout: kein "Ich"-Sitz – alle Spieler rund um den Tisch verteilen.
+const SPECTATOR_SLOTS = {
+  1: [[50, 12]],
+  2: [[50, 82], [50, 12]],
+  3: [[50, 82], [14, 26], [86, 26]],
+  4: [[28, 82], [72, 82], [14, 22], [86, 22]],
+  5: [[50, 84], [13, 58], [87, 58], [26, 14], [74, 14]],
+  6: [[30, 84], [70, 84], [9, 46], [91, 46], [28, 13], [72, 13]],
+};
+
 // Schmaler Bildschirm: Eck-Sitze nach innen ziehen und obere Reihe etwas tiefer,
 // damit nichts ueber den Tischrand hinausragt (sonst werden Sitze abgeschnitten).
 const OPP_SLOTS_MOBILE = {
@@ -1105,7 +1136,9 @@ function miniCardHtml(c) {
 }
 
 function render(s) {
-  const me = s.players[s.meIdx];
+  // Zuschauer haben keinen eigenen Sitz (meIdx < 0). me bleibt dann null.
+  const spectator = !!s.spectator || s.meIdx == null || s.meIdx < 0;
+  const me = spectator ? null : s.players[s.meIdx];
   if (s.flush !== panelFlush) buildSidePanels(s.flush);
   const handChanged = s.handNo !== prevHandNo;
   const communityGrew = s.community.length > prevCommunityCount;
@@ -1157,9 +1190,11 @@ function render(s) {
   if (s.pot > prevPot && !handChanged && s.stage !== 'handover') sfx.chip();
   if (s.yourTurn && !prevYourTurn) sfx.turn();
   if (s.stage === 'handover' && prevStage !== 'handover' && s.result) {
-    const iWon = s.result.winners.includes(s.meIdx);
-    if (iWon) sfx.win();
-    else sfx.lose();
+    if (!spectator) {
+      const iWon = s.result.winners.includes(s.meIdx);
+      if (iWon) sfx.win();
+      else sfx.lose();
+    }
     // Pot fliegt zu den Gewinnern (nicht beim Replay-Spulen).
     if (!replayMode) flyPotToWinners(s);
   }
@@ -1247,14 +1282,7 @@ function renderSeats(s, animate, revealAnim) {
   const container = $('seats');
   const n = s.players.length;
   const meIdx = s.meIdx;
-
-  // Reihenfolge der Gegner: ab dem Sitz nach mir, im Uhrzeigersinn.
-  const opps = [];
-  for (let k = 1; k < n; k++) opps.push(s.players[(meIdx + k) % n]);
-  // Auf schmalen Bildschirmen (Handy, Tablet, schmales Fenster) engere
-  // Sitz-Positionen verwenden, damit nichts ueber den Rand hinausragt.
-  const slotTable = window.innerWidth <= 820 ? OPP_SLOTS_MOBILE : OPP_SLOTS;
-  const slots = slotTable[opps.length] || slotTable[5];
+  const spectator = !!s.spectator || meIdx == null || meIdx < 0;
 
   const seen = new Set();
   // Baut den Sitz nur neu, wenn sich seine Signatur geaendert hat; Position wird
@@ -1277,8 +1305,23 @@ function renderSeats(s, animate, revealAnim) {
     else { el.style.left = `${x}%`; el.style.top = `${y}%`; el.style.bottom = ''; }
   };
 
-  opps.forEach((p, idx) => place(p, false, slots[idx][0], slots[idx][1]));
-  place(s.players[meIdx], true);
+  if (spectator) {
+    // Zuschauer: alle Spieler rund um den Tisch verteilen (kein "Ich"-Sitz).
+    const slots = SPECTATOR_SLOTS[n] || SPECTATOR_SLOTS[6];
+    s.players.forEach((p, i) => {
+      const sl = slots[i] || [50, 50];
+      place(p, false, sl[0], sl[1]);
+    });
+  } else {
+    // Reihenfolge der Gegner: ab dem Sitz nach mir, im Uhrzeigersinn.
+    const opps = [];
+    for (let k = 1; k < n; k++) opps.push(s.players[(meIdx + k) % n]);
+    // Auf schmalen Bildschirmen engere Sitz-Positionen (kein Ueberlauf).
+    const slotTable = window.innerWidth <= 820 ? OPP_SLOTS_MOBILE : OPP_SLOTS;
+    const slots = slotTable[opps.length] || slotTable[5];
+    opps.forEach((p, idx) => place(p, false, slots[idx][0], slots[idx][1]));
+    place(s.players[meIdx], true);
+  }
 
   // Verwaiste Sitze (Spieler weg) entfernen.
   for (const [id, entry] of seatNodeCache) {
@@ -1554,16 +1597,20 @@ function renderControls(s, me) {
   const showBtn = $('showCardsBtn');
   const replayBtn = $('replayBtn');
 
-  // Im Replay alle Live-Bedienelemente ausblenden (kein versehentliches Handeln).
-  if (replayMode) {
+  const spectator = !!s.spectator || s.meIdx == null || s.meIdx < 0;
+
+  // Im Replay ODER als Zuschauer alle Live-Bedienelemente ausblenden.
+  if (replayMode || spectator) {
     actionButtons.classList.add('hidden');
     raisePanel.classList.add('hidden');
     nextBtn.classList.add('hidden');
     showBtn.classList.add('hidden');
-    replayBtn.classList.add('hidden');
+    replayBtn.classList.toggle('hidden', !(spectator && replayAvailable(s)));
+    if (spectator && replayAvailable(s)) replayBtn.textContent = t('replay');
     $('rebuyBtn').classList.add('hidden');
     matchOver.classList.add('hidden');
-    turnInd.textContent = '';
+    turnInd.className = 'turn-indicator';
+    turnInd.textContent = spectator ? t('spectatorBadge') : '';
     return;
   }
 

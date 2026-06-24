@@ -192,6 +192,8 @@ function lobbyState(room, forToken) {
     })),
     youAreHost: room.players[0]?.token === forToken,
     canStart: !room.table && connectedCount >= 2,
+    spectators: room.spectators ? room.spectators.length : 0,
+    youAreSpectator: forToken === null,
   };
 }
 
@@ -219,6 +221,21 @@ function broadcast(room) {
     if (!c || c.socketId !== p.socketId || c.json !== json) {
       p._lobbyCache = { socketId: p.socketId, json };
       io.to(p.socketId).emit('lobby', lob);
+    }
+  }
+  // Zuschauer: gemeinsame Sicht ohne eigene/verdeckte Karten (view(null)).
+  if (room.spectators && room.spectators.length) {
+    const lob = lobbyState(room, null);
+    let spec = null;
+    if (room.table) {
+      spec = room.table.view(null);
+      spec.turnMsLeft = turnMsLeft;
+      spec.turnTotalMs = turnMsLeft != null ? room.turnTotalMs || null : null;
+      spec.spectator = true;
+    }
+    for (const sp of room.spectators) {
+      if (spec) io.to(sp.socketId).emit('state', spec);
+      io.to(sp.socketId).emit('lobby', lob);
     }
   }
   recordHandIfOver(room);
@@ -379,6 +396,14 @@ function seatBySocket(room, socketId) {
   return room?.players.find((p) => p.socketId === socketId) || null;
 }
 
+// Entfernt einen Zuschauer aus dem Raum. Gibt true zurueck, wenn einer entfernt wurde.
+function removeSpectator(room, socketId) {
+  if (!room.spectators) return false;
+  const before = room.spectators.length;
+  room.spectators = room.spectators.filter((s) => s.socketId !== socketId);
+  return room.spectators.length !== before;
+}
+
 function sendChatHistory(socket, room) {
   if (room.chat?.length) socket.emit('chatHistory', room.chat);
 }
@@ -422,6 +447,7 @@ io.on('connection', (socket) => {
       handRecorded: false, // Hand-Statistik dieser Hand schon geschrieben?
       handParticipants: [], // Teilnehmer der aktuellen Hand (fuer Statistik)
       handHistory: [], // letzte Hand-Ergebnisse (Gewinner/Pot/Kategorie)
+      spectators: [], // Zuschauer (nur socketId; keine Spieler, keine Aktionen)
     };
     rooms.set(code, room);
     socket.data.code = code;
@@ -460,6 +486,32 @@ io.on('connection', (socket) => {
     sendChatHistory(socket, room);
     sendHandHistory(socket, room);
     sendProfile(socket, token, cleanName(name));
+  });
+
+  // Einem Tisch als ZUSCHAUER beitreten: sieht den Tisch (ohne verdeckte Karten),
+  // ist kein Spieler und kann nicht handeln.
+  onSafe('spectate', ({ code }, cb) => {
+    code = (code || '').toUpperCase().trim();
+    const room = rooms.get(code);
+    if (!room) return cb?.({ error: 'Raum nicht gefunden.' });
+    if (!room.spectators) room.spectators = [];
+    if (!room.spectators.find((sp) => sp.socketId === socket.id)) {
+      room.spectators.push({ socketId: socket.id });
+    }
+    socket.data.code = code;
+    socket.data.spectator = true;
+    socket.join(code);
+    cancelCleanup(room);
+    cb?.({ ok: true, code });
+    if (room.table) {
+      const spec = room.table.view(null);
+      spec.spectator = true;
+      socket.emit('state', spec);
+    }
+    socket.emit('lobby', lobbyState(room, null));
+    sendChatHistory(socket, room);
+    sendHandHistory(socket, room);
+    broadcast(room); // Zuschauerzahl aktualisieren
   });
 
   // Host startet das Spiel: erstellt den Tisch aus den aktuellen Spielern.
@@ -621,6 +673,7 @@ io.on('connection', (socket) => {
   });
 
   onSafe('startHand', () => {
+    if (socket.data.spectator) return; // Zuschauer dürfen nichts starten
     const room = rooms.get(socket.data.code);
     if (!room) return;
     // Nur der Host darf das Spiel/eine neue Hand starten.
@@ -734,6 +787,17 @@ io.on('connection', (socket) => {
     if (code) socket.leave(code);
     socket.data.code = null;
     if (!room) return;
+    // Zuschauer: einfach austragen (kein Sitz, keine Auto-Aktion).
+    if (socket.data.spectator) {
+      socket.data.spectator = false;
+      removeSpectator(room, socket.id);
+      if (room.players.length === 0 && room.spectators.length === 0) {
+        destroyRoom(room);
+        return;
+      }
+      broadcast(room);
+      return;
+    }
     const seat = seatBySocket(room, socket.id);
     if (seat) {
       if (room.table) {
@@ -758,6 +822,11 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     const room = rooms.get(socket.data.code);
     if (!room) return;
+    if (socket.data.spectator) {
+      if (removeSpectator(room, socket.id)) broadcast(room);
+      maybeScheduleCleanup(room);
+      return;
+    }
     const seat = seatBySocket(room, socket.id);
     if (seat) seat.connected = false;
     // Falls der getrennte Spieler am Zug ist: Schonfrist-Uhr vor dem Broadcast setzen.

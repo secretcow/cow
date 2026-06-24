@@ -388,6 +388,14 @@ input { font: inherit; }
   border: 1px solid rgba(255, 255, 255, 0.14);
 }
 .stat-chip.hidden { display: none; }
+.spec-chip { color: #d6c2f0; border-color: rgba(190, 150, 230, 0.4); }
+
+/* Zuschauen-Button in der Lobby (dezent, volle Breite unter dem Beitreten-Feld) */
+.spectate-btn { width: 100%; margin-top: 8px; }
+.btn.ghost {
+  background: transparent; border: 1px solid rgba(255, 255, 255, 0.2); color: #cfe7d8;
+}
+.btn.ghost:hover { background: rgba(255, 255, 255, 0.08); }
 .replay-bar {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   z-index: 6; display: flex; align-items: center; gap: 6px;
