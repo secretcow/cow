@@ -1,7 +1,7 @@
 // End-to-End-Test ueber echte Sockets gegen den laufenden Server (Port 3000).
 import { io } from 'socket.io-client';
 
-const URL = 'http://localhost:3000';
+const URL = process.env.KP_TEST_URL || 'http://localhost:3000';
 let pass = 0, fail = 0;
 const assert = (n, c) => { if (c) pass++; else { fail++; console.error('FAIL:', n); } };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));

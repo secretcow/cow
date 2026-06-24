@@ -665,6 +665,9 @@ export class Table {
   }
 
   showdown() {
+    // Schon verteilt (z. B. synchroner Showdown + getakteter Run-out koennen
+    // beide ausloesen)? Dann nicht erneut – sonst saehe distribute committed=0.
+    if (this.stage === 'showdown' || this.stage === 'handover') return { ok: true };
     this.stage = 'showdown';
     const contenders = this.players
       .map((p, i) => ({ p, i }))
@@ -714,6 +717,11 @@ export class Table {
   }
 
   distribute(reason, evals, foldWinners) {
+    // Idempotent: eine Hand wird genau einmal verteilt. Schuetzt gegen ein
+    // doppeltes Distribute (z. B. wenn synchroner Showdown UND der getaktete
+    // All-In-Run-out beide ausloesen) – der zweite Aufruf saehe committed=0 und
+    // wuerde das korrekte Ergebnis (inkl. Side Pots) ueberschreiben.
+    if (this.stage === 'handover') return;
     const evalMap = new Map();
     if (evals) for (const e of evals) evalMap.set(e.i, e.eval);
 

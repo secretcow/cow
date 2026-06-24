@@ -365,5 +365,33 @@ function quickHand(t) {
   assert('lastAction fold gesetzt', t.players.find((p) => p.id === nxt.id).lastAction.type === 'fold');
 }
 
+// ---- Test: showdown ist idempotent (kein doppeltes Distribute) ----
+// Schuetzt gegen den Bug, bei dem ein zweiter Showdown (synchron + getakteter
+// Run-out) das Side-Pot-Ergebnis mit committed=0 ueberschrieb.
+{
+  const t = new Table(players(3), { flush: false });
+  t.players[0].stack = 100;
+  t.players[1].stack = 100;
+  t.players[2].stack = 100;
+  t.startHand();
+  let guard = 0;
+  while (t.stage !== 'handover' && guard++ < 30) {
+    const cur = t.players[t.toAct];
+    const a = t.view(cur.id).actions;
+    if (a.canRaise) t.act(cur.id, 'raise', a.maxRaiseTo);
+    else if (a.canCall) t.act(cur.id, 'call');
+    else t.act(cur.id, 'check');
+  }
+  assert('idempotent: handover erreicht', t.stage === 'handover');
+  assert('idempotent: pots vorhanden', Array.isArray(t.result.pots) && t.result.pots.length >= 1);
+  const potsBefore = JSON.stringify(t.result.pots);
+  const stacksBefore = t.players.map((p) => p.stack).join(',');
+  const potSumBefore = t.result.pots.reduce((s, p) => s + p.amount, 0);
+  t.showdown(); // zweiter Aufruf darf nichts veraendern
+  assert('idempotent: pots unveraendert', JSON.stringify(t.result.pots) === potsBefore);
+  assert('idempotent: stacks unveraendert', t.players.map((p) => p.stack).join(',') === stacksBefore);
+  assert('idempotent: Pot-Summe == Gesamtpot', potSumBefore === t.result.pot);
+}
+
 console.log(`\n${pass} bestanden, ${fail} fehlgeschlagen`);
 process.exit(fail === 0 ? 0 : 1);

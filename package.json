@@ -6,7 +6,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node src/handEval.test.js && node src/handEvalFlush.test.js && node src/poker.test.js && node src/pokerMulti.test.js && node src/store.test.js"
+    "test:unit": "node src/handEval.test.js && node src/handEvalFlush.test.js && node src/poker.test.js && node src/pokerMulti.test.js && node src/store.test.js",
+    "test:e2e": "node src/socketHarness.test.js",
+    "test": "npm run test:unit && npm run test:e2e"
   },
   "engines": {
     "node": ">=18"
