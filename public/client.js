@@ -711,6 +711,43 @@ if (chatForm) {
   });
 }
 
+// ---------- Emotes / Reaktionen ----------
+const EMOTES = ['👍', '😂', '😮', '🔥', '😢', '🤔'];
+(function buildEmoteBar() {
+  const bar = $('emoteBar');
+  if (!bar) return;
+  bar.innerHTML = EMOTES.map((e) => `<button class="emote-pick" data-emote="${e}">${e}</button>`).join('');
+  bar.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.emote-pick');
+    if (!btn) return;
+    socket.emit('emote', { emote: btn.dataset.emote });
+    bar.classList.add('hidden');
+  });
+})();
+if ($('emoteBtn')) {
+  $('emoteBtn').onclick = () => $('emoteBar').classList.toggle('hidden');
+}
+socket.on('emote', ({ seat, emote }) => {
+  if (replayMode) return; // Live-Emotes nicht ueber ein laufendes Replay legen
+  showEmotePop(seat, emote);
+});
+
+// Kurzlebige Emote-Blase ueber dem Sitz des Absenders (fixe Overlay-Ebene,
+// entkoppelt vom Reconciliation-Rendering der Sitze).
+function showEmotePop(seatIdx, emote) {
+  const p = lastState?.players?.[seatIdx];
+  const el = p && seatNodeCache.get(p.id)?.el;
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  const pop = document.createElement('div');
+  pop.className = 'emote-pop';
+  pop.textContent = emote;
+  pop.style.left = `${r.left + r.width / 2}px`;
+  pop.style.top = `${r.top + 6}px`;
+  document.body.appendChild(pop);
+  setTimeout(() => pop.remove(), 2200);
+}
+
 function renderLobby(lob) {
   if (lob.started) {
     $('lobby').classList.add('hidden');

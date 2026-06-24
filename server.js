@@ -127,6 +127,8 @@ const RUNOUT_START_MS = Number(process.env.RUNOUT_START_MS ?? 1800); // Pause, u
 const RUNOUT_STEP_MS = Number(process.env.RUNOUT_STEP_MS ?? 1200); // Takt pro Gemeinschaftskarte
 const RUNOUT_RIVER_MS = Number(process.env.RUNOUT_RIVER_MS ?? 2400); // extra Spannung vor der letzten Karte
 const CHAT_HISTORY = 60; // gespeicherte Chat-Nachrichten pro Raum
+const EMOTES = ['👍', '😂', '😮', '🔥', '😢', '🤔']; // erlaubte Schnell-Reaktionen
+const EMOTE_MIN_MS = 1200; // Mindestabstand zwischen Emotes pro Spieler (Anti-Spam)
 // Schonfrist, bevor ein getrennter Spieler, der am Zug ist, automatisch
 // checkt/foldet. Verhindert, dass die Hand bei Verbindungsverlust ewig haengt,
 // gibt aber Zeit fuer einen kurzen Reconnect.
@@ -673,6 +675,22 @@ io.on('connection', (socket) => {
     room.chat.push(msg);
     if (room.chat.length > CHAT_HISTORY) room.chat.shift();
     io.to(room.code).emit('chat', msg);
+  });
+
+  // Emote/Reaktion: kurzlebige Blase am Sitz des Absenders. Nur erlaubte Emotes,
+  // pro Spieler entprellt (Anti-Spam).
+  onSafe('emote', ({ emote }) => {
+    const room = rooms.get(socket.data.code);
+    if (!room) return;
+    const seat = seatBySocket(room, socket.id);
+    if (!seat) return;
+    if (!EMOTES.includes(emote)) return;
+    const now = Date.now();
+    if (seat.lastEmoteTs && now - seat.lastEmoteTs < EMOTE_MIN_MS) return;
+    seat.lastEmoteTs = now;
+    const seatIdx = room.players.indexOf(seat);
+    if (seatIdx < 0) return;
+    io.to(room.code).emit('emote', { seat: seatIdx, emote });
   });
 
   // Tisch verlassen und zurueck zur Lobby.
