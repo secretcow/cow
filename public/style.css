@@ -582,17 +582,24 @@ body.brainrot .cardref-name { font-size: 0.82rem; }
 }
 
 @media (max-width: 620px) {
+  /* Board-Karten lesbar halten, Gegner-Rückseiten klein (schmalere Sitze),
+     eigene Karten betont. */
   .card { width: 40px; height: 58px; }
-  .seat.me .hole .card { width: 52px; height: 74px; }
-  .card-emoji { font-size: 1.15rem; }
-  .seat { width: 96px; gap: 3px; }
-  .pname { max-width: 54px; }
-  .seat-info { font-size: 0.72rem; padding: 4px 9px; gap: 6px; }
-  .badge { font-size: 0.6rem; padding: 1px 5px; }
-  .bet-chip { font-size: 0.72rem; padding: 2px 8px; }
-  .last-act { font-size: 0.62rem; padding: 1px 7px; top: -11px; }
-  .turn-timer { width: 60px; }
-  .table { border-radius: 40% / 26%; height: min(60vh, 500px); }
+  #community .card { width: 42px; height: 60px; }
+  #seats .seat:not(.me) .hole .card { width: 34px; height: 48px; }
+  .seat.me .hole .card { width: 50px; height: 70px; }
+  .card-emoji { font-size: 1.1rem; }
+  .card-name { font-size: 0.56rem; }
+  .seat { width: 84px; gap: 3px; }
+  .pname { max-width: 46px; }
+  .seat-info { font-size: 0.66rem; padding: 3px 7px; gap: 4px; }
+  .badge { font-size: 0.54rem; padding: 1px 4px; }
+  .bet-chip { font-size: 0.64rem; padding: 1px 7px; }
+  .last-act { font-size: 0.58rem; padding: 1px 6px; top: -10px; }
+  .turn-timer { width: 54px; }
+  .table { border-radius: 40% / 26%; height: min(62vh, 520px); }
+  /* Brainrot-Kurznamen passen so sauber auf die Board-Karten. */
+  body.brainrot #community .card-name { font-size: 0.5rem; }
 }
 
 /* Respektiert die System-Einstellung "Bewegung reduzieren": schaltet die

@@ -24,17 +24,18 @@ const ANIMALS = {
 };
 // Brainrot-Modus (reines Anzeige-Skin, gleiche Werte/Ränge). Namen sind in DE/EN
 // identisch (Eigennamen). Wird per Client-Toggle aktiviert (kein Serverumbau).
+// `short` = Kurzname für die enge Kartenfläche; de/en = voller Name (Übersicht/Log).
 const BRAINROT = {
-  1: { de: 'Boneca Ambalabu', en: 'Boneca Ambalabu', value: 10, emoji: '🐸' },
-  2: { de: 'Trippi Troppi', en: 'Trippi Troppi', value: 40, emoji: '🦐' },
-  3: { de: 'Chimpanzini Bananini', en: 'Chimpanzini Bananini', value: 90, emoji: '🍌' },
-  4: { de: 'Brr Brr Patapim', en: 'Brr Brr Patapim', value: 160, emoji: '🌳' },
-  5: { de: 'Cappuccino Assassino', en: 'Cappuccino Assassino', value: 250, emoji: '☕' },
-  6: { de: 'Lirilì Larilà', en: 'Lirilì Larilà', value: 350, emoji: '🌵' },
-  7: { de: 'Bombombini Gusini', en: 'Bombombini Gusini', value: 500, emoji: '🪿' },
-  8: { de: 'Tung Tung Tung Sahur', en: 'Tung Tung Tung Sahur', value: 650, emoji: '🪵' },
-  9: { de: 'Bombardiro Crocodilo', en: 'Bombardiro Crocodilo', value: 800, emoji: '🐊' },
-  10: { de: 'Tralalero Tralala', en: 'Tralalero Tralala', value: 1000, emoji: '🦈' },
+  1: { de: 'Boneca Ambalabu', en: 'Boneca Ambalabu', short: 'Boneca', value: 10, emoji: '🐸' },
+  2: { de: 'Trippi Troppi', en: 'Trippi Troppi', short: 'Trippi', value: 40, emoji: '🦐' },
+  3: { de: 'Chimpanzini Bananini', en: 'Chimpanzini Bananini', short: 'Chimp', value: 90, emoji: '🍌' },
+  4: { de: 'Brr Brr Patapim', en: 'Brr Brr Patapim', short: 'Patapim', value: 160, emoji: '🌳' },
+  5: { de: 'Cappuccino Assassino', en: 'Cappuccino Assassino', short: 'Cappu', value: 250, emoji: '☕' },
+  6: { de: 'Lirilì Larilà', en: 'Lirilì Larilà', short: 'Lirilì', value: 350, emoji: '🌵' },
+  7: { de: 'Bombombini Gusini', en: 'Bombombini Gusini', short: 'Gusini', value: 500, emoji: '🪿' },
+  8: { de: 'Tung Tung Tung Sahur', en: 'Tung Tung Tung Sahur', short: 'Sahur', value: 650, emoji: '🪵' },
+  9: { de: 'Bombardiro Crocodilo', en: 'Bombardiro Crocodilo', short: 'Croco', value: 800, emoji: '🐊' },
+  10: { de: 'Tralalero Tralala', en: 'Tralalero Tralala', short: 'Tralala', value: 1000, emoji: '🦈' },
 };
 let brainrotMode = localStorage.getItem('kuhpoker_brainrot') === '1';
 // Liefert den aktuell gewählten Karten-Satz (Tier oder Brainrot) für einen Rang.
@@ -354,6 +355,11 @@ function streetName(l, s) {
 }
 function animalName(l, rank) {
   return deck(rank)[l];
+}
+// Kurzname für die enge Kartenfläche (fällt auf den vollen Namen zurück).
+function cardFaceName(rank) {
+  const a = deck(rank);
+  return a.short || a[lang];
 }
 function cardWords(l, c) {
   return deck(c.rank)[l];
@@ -1151,7 +1157,7 @@ const OPP_SLOTS_MOBILE = {
   2: [[18, 22], [82, 22]],
   3: [[16, 38], [50, 9], [84, 38]],
   4: [[14, 32], [33, 10], [67, 10], [86, 32]],
-  5: [[13, 34], [30, 10], [50, 7], [70, 10], [87, 34]],
+  5: [[13, 34], [24, 11], [50, 7], [76, 11], [87, 34]],
 };
 
 function cardEl(card) {
@@ -1168,7 +1174,7 @@ function cardEl(card) {
   el.innerHTML = `
     <div class="card-corner top"><span class="cval">${a.value}</span><span class="suit">${suit.symbol}</span></div>
     <div class="card-emoji">${a.emoji}</div>
-    <div class="card-name">${animalName(lang, card.rank)}</div>
+    <div class="card-name">${cardFaceName(card.rank)}</div>
     <div class="card-corner bot"><span class="cval">${a.value}</span><span class="suit">${suit.symbol}</span></div>`;
   return el;
 }
