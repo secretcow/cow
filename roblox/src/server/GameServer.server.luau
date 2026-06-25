@@ -41,6 +41,17 @@ local ROOM_TTL = 120 -- Sek.: Raum lebt weiter, solange niemand verbunden ist
 local RUNOUT_STEP = 1.3 -- Sek. pro Run-out-Strasse
 local DISCONNECT_GRACE = 30 -- Sek. bis Auto-Fold eines getrennten Spielers
 local CHAT_HISTORY = 40 -- gespeicherte Chat-Nachrichten pro Raum
+local HAND_HISTORY_MAX = 25 -- gespeicherte Hand-Ergebnisse pro Raum
+local EMOTE_MIN = 1.2 -- Mindestabstand (Sek.) zwischen Emotes pro Spieler (Anti-Spam)
+local EMOTES = { "👍", "😂", "😮", "🔥", "😢", "🤔" } -- erlaubte Schnell-Reaktionen
+local function isEmote(e)
+	for _, v in EMOTES do
+		if v == e then
+			return true
+		end
+	end
+	return false
+end
 -- Auto-Pilot fuer oeffentliche Quick-Play-Tische (kein Host noetig):
 local AUTO_START_DELAY = 4 -- Sek. Countdown bis Spielstart (laesst weitere Spieler rein)
 local HAND_DELAY = 3 -- Sek. Pause bis zur naechsten Hand
@@ -84,10 +95,13 @@ local RefreshVipEvent = mkEvent("RefreshVip")
 local ClaimQuestEvent = mkEvent("ClaimQuest")
 local ClaimAchievementEvent = mkEvent("ClaimAchievement")
 local StateEvent = mkEvent("State")
+local EmoteEvent = mkEvent("Emote") -- Schnell-Reaktion (Server -> alle im Raum)
+local SpectateEvent = mkEvent("Spectate") -- als Zuschauer einem Tisch beitreten
 
 -- ---- Zustand ----
 local rm = RoomManager.new()
 local playerRoom = {} -- [idString] = roomCode
+local spectatorRoom = {} -- [idString] = roomCode (Zuschauer, kein Sitz)
 
 local function idOf(player)
 	return tostring(player.UserId)
@@ -200,6 +214,8 @@ local function tableView(room, id)
 			pv.vip = true -- VIP-Abzeichen (👑) am Sitz
 		end
 	end
+	v.handHistory = room.handHistory -- Verlauf der letzten Haende (fuer das Panel)
+	v.spectators = specCount(room) -- Anzahl Zuschauer (fuer die Anzeige)
 	return v
 end
 
@@ -240,6 +256,17 @@ function connectedCount(room)
 	return n
 end
 
+-- Anzahl Zuschauer eines Raums.
+function specCount(room)
+	local n = 0
+	if room.spectators then
+		for _ in room.spectators do
+			n += 1
+		end
+	end
+	return n
+end
+
 local function sendLobby(player)
 	StateEvent:FireClient(player, lobbyPayload(player))
 end
@@ -250,6 +277,18 @@ local function broadcastRoom(room)
 			local plr = playerById(p.id)
 			if plr then
 				StateEvent:FireClient(plr, tableView(room, p.id))
+			end
+		end
+	end
+	-- Zuschauer: dieselbe Tisch-Sicht (Engine verdeckt fremde Karten, meIdx=nil),
+	-- zusaetzlich als Zuschauer markiert.
+	if room.spectators then
+		for specId in room.spectators do
+			local plr = playerById(specId)
+			if plr then
+				local v = tableView(room, specId)
+				v.spectator = true
+				StateEvent:FireClient(plr, v)
 			end
 		end
 	end
@@ -293,6 +332,35 @@ local function recordResults(room)
 	if t.stage == "handover" and t.result and t.handNo ~= room.lastHandRecorded then
 		room.lastHandRecorded = t.handNo
 		local pot = t.result.pot or 0
+		-- Hand-Historie: genau einmal pro Hand einen Eintrag anhaengen.
+		do
+			local winnerNames = {}
+			for _, seatIdx in t.result.winners do
+				local wp = t.players[seatIdx]
+				table.insert(winnerNames, (wp and wp.name) or "?")
+			end
+			local cat = nil
+			if t.result.reason == "showdown" and t.result.reveal then
+				local w = t.result.winners[1]
+				for _, r in t.result.reveal do
+					if r.i == w and r.eval and r.eval.score then
+						cat = r.eval.score[1]
+						break
+					end
+				end
+			end
+			table.insert(room.handHistory, {
+				hand = t.handNo,
+				winners = winnerNames,
+				pot = pot,
+				reason = t.result.reason or "showdown",
+				cat = cat,
+				split = #t.result.winners > 1,
+			})
+			while #room.handHistory > HAND_HISTORY_MAX do
+				table.remove(room.handHistory, 1)
+			end
+		end
 		for _, seatIdx in t.result.winners do
 			local p = t.players[seatIdx]
 			if p and not isBot(room, p.id) then
@@ -731,6 +799,9 @@ local function initRoomRuntime(room)
 	room.bots = {} -- [botId] = true (KI-Gegner an oeffentlichen Tischen)
 	room.matchRecorded = false
 	room.lastHandRecorded = nil
+	room.spectators = {} -- [idString] = true (Zuschauer, kein Sitz)
+	room.handHistory = {} -- letzte Hand-Ergebnisse (Gewinner/Pot/Kategorie)
+	room.emoteAt = {} -- [idString] = os.clock() der letzten Emote (Anti-Spam)
 end
 
 -- ===================== Remotes verdrahten =====================
@@ -845,6 +916,18 @@ end
 
 LeaveRoomEvent.OnServerEvent:Connect(function(player)
 	local id = idOf(player)
+	-- Zuschauer: einfach austragen (kein Sitz, keine Auto-Aktion).
+	local specCode = spectatorRoom[id]
+	if specCode then
+		spectatorRoom[id] = nil
+		local sroom = rm:getRoom(specCode)
+		if sroom and sroom.spectators then
+			sroom.spectators[id] = nil
+			broadcastRoom(sroom)
+		end
+		sendLobby(player)
+		return
+	end
 	local code = playerRoom[id]
 	if not code then
 		return
@@ -967,6 +1050,68 @@ ChatEvent.OnServerEvent:Connect(function(player, text)
 		table.remove(room.chat, 1)
 	end
 	broadcastRoom(room)
+end)
+
+-- Emote/Reaktion: kurzlebige Blase am Sitz des Absenders. Nur erlaubte Emotes,
+-- pro Spieler entprellt; an alle im Raum (inkl. Zuschauer) verteilt.
+EmoteEvent.OnServerEvent:Connect(function(player, emote)
+	local id = idOf(player)
+	local code = playerRoom[id]
+	local room = code and rm:getRoom(code)
+	if not room then
+		return
+	end
+	if not isEmote(emote) then
+		return
+	end
+	local now = os.clock()
+	if room.emoteAt and room.emoteAt[id] and now - room.emoteAt[id] < EMOTE_MIN then
+		return
+	end
+	room.emoteAt = room.emoteAt or {}
+	room.emoteAt[id] = now
+	local payload = { id = id, emote = emote }
+	for _, p in room.players do
+		if room.connected[p.id] then
+			local plr = playerById(p.id)
+			if plr then
+				EmoteEvent:FireClient(plr, payload)
+			end
+		end
+	end
+	if room.spectators then
+		for specId in room.spectators do
+			local plr = playerById(specId)
+			if plr then
+				EmoteEvent:FireClient(plr, payload)
+			end
+		end
+	end
+end)
+
+-- Einem laufenden Tisch als ZUSCHAUER beitreten: sieht den Tisch (ohne verdeckte
+-- Karten, meIdx=nil), ist kein Spieler und kann nicht handeln.
+SpectateEvent.OnServerEvent:Connect(function(player, code)
+	local id = idOf(player)
+	if playerRoom[id] then
+		SpectateEvent:FireClient(player, { error = "Du sitzt bereits am Tisch." })
+		return
+	end
+	code = tostring(code or ""):upper():gsub("%s+", "")
+	local room = rm:getRoom(code)
+	if not room then
+		SpectateEvent:FireClient(player, { error = "Raum nicht gefunden." })
+		return
+	end
+	initRoomRuntime(room)
+	room.spectators[id] = true
+	spectatorRoom[id] = code
+	cancelCleanup(room)
+	SpectateEvent:FireClient(player, { ok = true, code = code })
+	local v = tableView(room, id)
+	v.spectator = true
+	StateEvent:FireClient(player, v)
+	broadcastRoom(room) -- Zuschauerzahl aktualisieren
 end)
 
 -- Einsteiger-Tutorial gesehen: Flag dauerhaft setzen (zeigt es nie wieder an).
@@ -1159,6 +1304,16 @@ end)
 Players.PlayerRemoving:Connect(function(player)
 	local id = idOf(player)
 	ProfileStore.save(id)
+	-- Zuschauer austragen.
+	local specCode = spectatorRoom[id]
+	if specCode then
+		spectatorRoom[id] = nil
+		local sroom = rm:getRoom(specCode)
+		if sroom and sroom.spectators then
+			sroom.spectators[id] = nil
+			broadcastRoom(sroom)
+		end
+	end
 	local code = playerRoom[id]
 	local room = code and rm:getRoom(code)
 	if not room then

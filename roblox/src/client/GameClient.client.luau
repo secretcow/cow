@@ -36,6 +36,8 @@ local EquipEvent = Remotes:WaitForChild("Equip")
 local RefreshVipEvent = Remotes:WaitForChild("RefreshVip")
 local ClaimQuestEvent = Remotes:WaitForChild("ClaimQuest")
 local StateEvent = Remotes:WaitForChild("State")
+local EmoteEvent = Remotes:WaitForChild("Emote")
+local SpectateEvent = Remotes:WaitForChild("Spectate")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
@@ -534,7 +536,7 @@ mkCorner(createBtn, 8)
 
 -- ---- Tisch beitreten ----
 local joinCard = Instance.new("Frame")
-joinCard.Size = UDim2.new(0, 420, 0, 200)
+joinCard.Size = UDim2.new(0, 420, 0, 248)
 joinCard.Position = UDim2.new(0.5, 10, 0, 268)
 joinCard.BackgroundColor3 = COL_DARK
 joinCard.BorderSizePixel = 0
@@ -586,6 +588,18 @@ joinBtn.TextSize = 16
 joinBtn.Text = "Beitreten"
 joinBtn.Parent = joinCard
 mkCorner(joinBtn, 8)
+
+-- Als Zuschauer beitreten (sieht den Tisch, keine verdeckten Karten, kein Handeln).
+local spectateBtn = Instance.new("TextButton")
+spectateBtn.Size = UDim2.new(1, -24, 0, 38)
+spectateBtn.Position = UDim2.new(0, 12, 0, 172)
+spectateBtn.BackgroundColor3 = Color3.fromRGB(70, 96, 130)
+spectateBtn.TextColor3 = Color3.fromRGB(235, 240, 250)
+spectateBtn.Font = Enum.Font.GothamBold
+spectateBtn.TextSize = 15
+spectateBtn.Text = "👁 Zuschauen"
+spectateBtn.Parent = joinCard
+mkCorner(spectateBtn, 8)
 
 local lobbyError = Instance.new("TextLabel")
 lobbyError.Size = UDim2.new(0, 860, 0, 24)
@@ -2857,7 +2871,9 @@ local function renderTable(view)
 	if not view then
 		return
 	end
-	local me = view.players[view.meIdx]
+	-- Zuschauer haben keinen eigenen Sitz (meIdx=nil): nur zuschauen, nicht handeln.
+	local spectator = view.spectator == true or view.meIdx == nil
+	local me = if view.meIdx then view.players[view.meIdx] else nil
 
 	-- Equity-Map (Sitzindex -> Prozent)
 	local eqMap = {}
@@ -2956,6 +2972,9 @@ local function renderTable(view)
 		stageTxt = ">> DU BIST AM ZUG <<"
 	elseif view.toActId then
 		stageTxt ..= `   ·   am Zug: {tostring(view.toActId)}`
+	end
+	if spectator then
+		stageTxt = if lang == "de" then "👁 Zuschauer-Modus" else "👁 Spectator mode"
 	end
 	stageLabel.Text = stageTxt
 
@@ -3141,7 +3160,8 @@ local function renderTable(view)
 	if a then
 		checkCallBtn.Text = if a.canCall then `Call {a.toCall}` else "Check"
 	end
-	rebuyBtn.Visible = view.cash == true
+	rebuyBtn.Visible = not spectator
+		and view.cash == true
 		and view.betweenHands == true
 		and (view.myStack or 0) < (view.buyIn or 0)
 
@@ -3209,9 +3229,218 @@ joinBtn.Activated:Connect(function()
 	end
 end)
 
+-- Als Zuschauer beitreten: Server schickt die Tisch-Sicht (StateEvent) bzw. einen
+-- Fehler ueber SpectateEvent zurueck.
+spectateBtn.Activated:Connect(function()
+	lobbyError.Text = ""
+	local code = codeInput.Text
+	if not code or #code == 0 then
+		lobbyError.Text = if lang == "de" then "Bitte Code eingeben." else "Please enter a code."
+		return
+	end
+	SpectateEvent:FireServer(code)
+end)
+SpectateEvent.OnClientEvent:Connect(function(res)
+	if res and res.error then
+		lobbyError.Text = res.error
+	elseif res and res.ok then
+		codeInput.Text = ""
+	end
+end)
+
 leaveBtn.Activated:Connect(function()
 	LeaveRoomEvent:FireServer()
 end)
+
+-- ===== Emotes (Schnell-Reaktionen) — register-frugal im do-Block =====
+do
+	local EM = { "👍", "😂", "😮", "🔥", "😢", "🤔" }
+	local emoteBtn = Instance.new("TextButton")
+	emoteBtn.Size = UDim2.new(0, 40, 0, 30)
+	emoteBtn.Position = UDim2.new(0, 336, 1, -34)
+	emoteBtn.BackgroundColor3 = COL_DARK
+	emoteBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	emoteBtn.Font = Enum.Font.GothamBold
+	emoteBtn.TextSize = 18
+	emoteBtn.Text = "😊"
+	emoteBtn.Parent = tableScreen
+	mkCorner(emoteBtn, 8)
+
+	local bar = Instance.new("Frame")
+	bar.Size = UDim2.new(0, 6 * 42 + 8, 0, 44)
+	bar.Position = UDim2.new(0, 336, 1, -84)
+	bar.BackgroundColor3 = Color3.fromRGB(20, 22, 26)
+	bar.Visible = false
+	bar.Parent = tableScreen
+	mkCorner(bar, 10)
+	local barLayout = Instance.new("UIListLayout")
+	barLayout.FillDirection = Enum.FillDirection.Horizontal
+	barLayout.Padding = UDim.new(0, 4)
+	barLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	barLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	barLayout.Parent = bar
+	for _, e in EM do
+		local eb = Instance.new("TextButton")
+		eb.Size = UDim2.new(0, 38, 0, 38)
+		eb.BackgroundTransparency = 1
+		eb.Font = Enum.Font.GothamBold
+		eb.TextSize = 22
+		eb.Text = e
+		eb.Parent = bar
+		eb.Activated:Connect(function()
+			EmoteEvent:FireServer(e)
+			bar.Visible = false
+		end)
+	end
+	emoteBtn.Activated:Connect(function()
+		bar.Visible = not bar.Visible
+	end)
+
+	-- Eingehende Emotes: grosse, aufsteigende Blase mit Absendername.
+	EmoteEvent.OnClientEvent:Connect(function(data)
+		if not data or not data.emote then
+			return
+		end
+		local name = "?"
+		if lastView and lastView.players then
+			for _, p in lastView.players do
+				if tostring(p.id) == tostring(data.id) then
+					name = p.name
+					break
+				end
+			end
+		end
+		local bubble = Instance.new("TextLabel")
+		bubble.Size = UDim2.new(0, 220, 0, 56)
+		bubble.Position = UDim2.new(0.5, -110, 0, 250)
+		bubble.BackgroundTransparency = 1
+		bubble.Font = Enum.Font.GothamBold
+		bubble.TextSize = 38
+		bubble.TextColor3 = Color3.fromRGB(255, 255, 255)
+		bubble.Text = `{data.emote}  {name}`
+		bubble.ZIndex = 50
+		bubble.Parent = tableScreen
+		TweenService:Create(
+			bubble,
+			TweenInfo.new(2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+			{ Position = UDim2.new(0.5, -110, 0, 165), TextTransparency = 1 }
+		):Play()
+		task.delay(2.1, function()
+			bubble:Destroy()
+		end)
+	end)
+end
+
+-- ===== Hand-Historie (Verlauf der letzten Haende) — register-frugal =====
+do
+	local histBtn = Instance.new("TextButton")
+	histBtn.Size = UDim2.new(0, 40, 0, 30)
+	histBtn.Position = UDim2.new(0, 384, 1, -34)
+	histBtn.BackgroundColor3 = COL_DARK
+	histBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	histBtn.Font = Enum.Font.GothamBold
+	histBtn.TextSize = 16
+	histBtn.Text = "📜"
+	histBtn.Parent = tableScreen
+	mkCorner(histBtn, 8)
+
+	local panel = Instance.new("Frame")
+	panel.Size = UDim2.new(0, 300, 0, 320)
+	panel.Position = UDim2.new(1, -320, 0, 60)
+	panel.BackgroundColor3 = Color3.fromRGB(18, 20, 26)
+	panel.Visible = false
+	panel.ZIndex = 40
+	panel.Parent = tableScreen
+	mkCorner(panel, 12)
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, -40, 0, 28)
+	title.Position = UDim2.new(0, 12, 0, 8)
+	title.BackgroundTransparency = 1
+	title.Font = Enum.Font.GothamBold
+	title.TextSize = 16
+	title.TextColor3 = COL_GOLD
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.ZIndex = 41
+	title.Text = "📜 Hand-Historie"
+	title.Parent = panel
+
+	local closeBtn = Instance.new("TextButton")
+	closeBtn.Size = UDim2.new(0, 26, 0, 26)
+	closeBtn.Position = UDim2.new(1, -32, 0, 8)
+	closeBtn.BackgroundTransparency = 1
+	closeBtn.Font = Enum.Font.GothamBold
+	closeBtn.TextSize = 18
+	closeBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+	closeBtn.Text = "✕"
+	closeBtn.ZIndex = 41
+	closeBtn.Parent = panel
+
+	local list = Instance.new("ScrollingFrame")
+	list.Size = UDim2.new(1, -16, 1, -48)
+	list.Position = UDim2.new(0, 8, 0, 40)
+	list.BackgroundTransparency = 1
+	list.BorderSizePixel = 0
+	list.ScrollBarThickness = 4
+	list.CanvasSize = UDim2.new(0, 0, 0, 0)
+	list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	list.ZIndex = 41
+	list.Parent = panel
+	local listLayout = Instance.new("UIListLayout")
+	listLayout.Padding = UDim.new(0, 4)
+	listLayout.Parent = list
+
+	local function render()
+		clear(list)
+		local hist = (lastView and lastView.handHistory) or {}
+		if #hist == 0 then
+			local empty = Instance.new("TextLabel")
+			empty.Size = UDim2.new(1, -8, 0, 22)
+			empty.BackgroundTransparency = 1
+			empty.Font = Enum.Font.Gotham
+			empty.TextSize = 13
+			empty.TextColor3 = Color3.fromRGB(150, 165, 158)
+			empty.TextXAlignment = Enum.TextXAlignment.Left
+			empty.ZIndex = 41
+			empty.Text = if lang == "de" then "Noch keine Hände gespielt." else "No hands played yet."
+			empty.Parent = list
+			return
+		end
+		for k = #hist, 1, -1 do
+			local h = hist[k]
+			local names = table.concat(h.winners or {}, ", ")
+			local tag
+			if h.reason == "fold" then
+				tag = "🏳️ Fold"
+			elseif Strings.catName then
+				tag = Strings.catName(lang, h.cat, false)
+			else
+				tag = ""
+			end
+			local row = Instance.new("TextLabel")
+			row.Size = UDim2.new(1, -8, 0, 24)
+			row.BackgroundTransparency = 1
+			row.Font = Enum.Font.Gotham
+			row.TextSize = 13
+			row.TextColor3 = Color3.fromRGB(225, 235, 228)
+			row.TextXAlignment = Enum.TextXAlignment.Left
+			row.RichText = true
+			row.ZIndex = 41
+			row.Text = `<b>#{h.hand}</b>  {names}  <font color="#bfe9cd">{tag}</font>  <font color="#f0d68a">{h.pot} 🪙</font>`
+			row.Parent = list
+		end
+	end
+
+	histBtn.Activated:Connect(function()
+		panel.Visible = not panel.Visible
+		if panel.Visible then
+			render()
+		end
+	end)
+	closeBtn.Activated:Connect(function()
+		panel.Visible = false
+	end)
+end
 
 startBtn.Activated:Connect(function()
 	StartHandEvent:FireServer()
