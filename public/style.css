@@ -446,8 +446,8 @@ body.brainrot .cardref-name { font-size: 0.82rem; }
    Fluss genommen, damit die Mitte kompakt bleibt und nichts ueberlappt. */
 .stage-label {
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  z-index: 0; opacity: 0.4; pointer-events: none;
-  font-size: 1rem; color: #cfe7d8; letter-spacing: 3px; text-transform: uppercase; font-weight: 700;
+  z-index: 0; opacity: 0.28; pointer-events: none;
+  font-family: var(--serif); font-size: 1.05rem; color: var(--gold); letter-spacing: 4px; text-transform: uppercase; font-weight: 600;
 }
 .blind-info {
   white-space: nowrap; text-align: center;
@@ -482,8 +482,11 @@ body.brainrot .cardref-name { font-size: 0.82rem; }
 .replay-tag { font-size: 0.72rem; font-weight: 800; color: #ffd86b; letter-spacing: 0.5px; padding: 0 4px; }
 .replay-pos { font-size: 0.74rem; font-weight: 700; color: #cfe7d8; min-width: 38px; text-align: center; }
 .result-banner { position: relative; z-index: 2; font-size: 1.1rem; font-weight: 800; padding: 8px 20px; border-radius: 10px; background: rgba(0, 0, 0, 0.6); text-align: center; }
-.result-banner.win { background: var(--win); color: #062a13; }
-.result-banner.lose { background: #7a2820; }
+.result-banner.win {
+  background: linear-gradient(180deg, #1f9460, #0c5a38); color: #f4f8ec;
+  box-shadow: inset 0 0 0 1px rgba(212, 175, 55, 0.45), 0 0 22px rgba(212, 175, 55, 0.28);
+}
+.result-banner.lose { background: linear-gradient(180deg, #7a2820, #461109); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.4); }
 .result-banner.split {
   background: linear-gradient(135deg, rgba(255, 216, 107, 0.18), rgba(0, 0, 0, 0.55));
   border: 1px solid rgba(255, 216, 107, 0.5); padding: 10px 16px;
@@ -525,8 +528,8 @@ body.brainrot .cardref-name { font-size: 0.82rem; }
 .win-hand-cards { display: flex; gap: 5px; justify-content: center; flex-wrap: wrap; }
 .mini-card {
   display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
-  width: 30px; height: 40px; border-radius: 5px; background: #fff; color: #1a1a1a;
-  border-bottom: 3px solid var(--suit); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  width: 30px; height: 40px; border-radius: 5px; background: linear-gradient(165deg, #fffdf6, #f1e9d4); color: var(--ink);
+  border-bottom: 3px solid var(--suit); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(0, 0, 0, 0.06);
   line-height: 1;
 }
 .mini-emoji { font-size: 0.82rem; }
@@ -586,8 +589,9 @@ body.brainrot .cardref-name { font-size: 0.82rem; }
 /* ===== Log ===== */
 .log {
   width: min(960px, 96vw); margin: 0 auto; height: 92px; overflow-y: auto;
-  background: rgba(0, 0, 0, 0.35); border-radius: 10px; padding: 10px 14px;
-  font-size: 0.82rem; color: #b8c9bf; line-height: 1.5;
+  background: rgba(8, 20, 14, 0.5); border: 1px solid rgba(212, 175, 55, 0.12);
+  border-radius: 10px; padding: 10px 14px;
+  font-size: 0.82rem; color: #c2cfc6; line-height: 1.5;
 }
 
 /* ===== Referenz-Panels (Rangfolge / Karten) ===== */
@@ -632,7 +636,8 @@ body.brainrot .cardref-name { font-size: 0.82rem; }
 /* ===== Tisch-Chat ===== */
 .chat {
   width: min(960px, 96vw); margin: 10px auto 6px; display: flex; flex-direction: column;
-  background: rgba(0, 0, 0, 0.35); border-radius: 10px; overflow: hidden;
+  background: rgba(8, 20, 14, 0.5); border: 1px solid rgba(212, 175, 55, 0.12);
+  border-radius: 10px; overflow: hidden;
 }
 .chat-messages {
   height: 110px; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 4px;
@@ -642,10 +647,29 @@ body.brainrot .cardref-name { font-size: 0.82rem; }
 .chat-name { color: var(--gold); font-weight: 700; margin-right: 6px; }
 .chat-input { display: flex; gap: 8px; padding: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
 .chat-input input {
-  flex: 1; padding: 9px 12px; border-radius: 8px; border: 1px solid #3a4a40;
-  background: #0e1712; color: #fff; font-size: 0.9rem;
+  flex: 1; padding: 9px 12px; border-radius: 8px; border: 1px solid rgba(212, 175, 55, 0.22);
+  background: #0d1410; color: var(--cream); font-size: 0.9rem;
 }
+.chat-input input:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
 .chat-input .btn { white-space: nowrap; }
+
+/* ===== Casino-Scrollbars (gold) ===== */
+.side-body, .log, .chat-messages, .rules { scrollbar-width: thin; scrollbar-color: var(--gold-deep) transparent; }
+.side-body::-webkit-scrollbar,
+.log::-webkit-scrollbar,
+.chat-messages::-webkit-scrollbar { width: 9px; }
+.side-body::-webkit-scrollbar-track,
+.log::-webkit-scrollbar-track,
+.chat-messages::-webkit-scrollbar-track { background: transparent; }
+.side-body::-webkit-scrollbar-thumb,
+.log::-webkit-scrollbar-thumb,
+.chat-messages::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--gold-deep), #6b5214);
+  border-radius: 999px; border: 2px solid transparent; background-clip: padding-box;
+}
+.side-body::-webkit-scrollbar-thumb:hover,
+.log::-webkit-scrollbar-thumb:hover,
+.chat-messages::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, var(--gold), var(--gold-deep)); background-clip: padding-box; }
 
 /* ===== Toast ===== */
 .toast {
