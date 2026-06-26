@@ -11,7 +11,6 @@
   --wood-dark: #2e1d12;
   --card-bg: #fbf8ee;
   --ink: #1a140a;
-  --accent: #b0341f;      /* Herz-Rot / Akzent */
   --win: #3fb469;
   --felt-line: rgba(212, 175, 55, 0.16);
   --serif: 'Cinzel', 'Playfair Display', Georgia, 'Times New Roman', serif;
@@ -26,8 +25,10 @@ html { overflow-x: hidden; }
 body {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   /* Dämmriger Pokerraum: warmes Smaragd nach oben, fast schwarz am Rand. */
+  /* Kein background-attachment: fixed -> vermeidet Repaint-Jank beim Scrollen (v. a. Mobile). */
   background:
-    radial-gradient(130% 90% at 50% -12%, #16432f 0%, #0a2117 42%, #050b08 100%) fixed;
+    radial-gradient(130% 90% at 50% -12%, #16432f 0%, #0a2117 42%, #050b08 100%) no-repeat;
+  background-color: #050b08;
   color: #f1ead9;
   min-height: 100vh;
   overflow-x: hidden;
