@@ -1224,6 +1224,10 @@ function render(s) {
   renderCommunity(s);
 
   $('pot').textContent = t('pot', s.pot);
+  // Spielphase am Container hinterlegen, damit das Layout am Rundenende reagieren
+  // kann (z. B. den dann leeren Pot ausblenden, der sonst mit dem oberen Sitz
+  // kollidiert – v. a. im Heads-up, wo die Sitze direkt ueber/unter der Mitte sind).
+  $('game').dataset.stage = s.stage;
   // Strassen-Wasserzeichen nur waehrend aktiver Strassen; am Rundenende zeigt die
   // Mitte das Ergebnis-Banner – dann kein Wasserzeichen dahinter.
   const showStage = !['idle', 'showdown', 'handover'].includes(s.stage);
