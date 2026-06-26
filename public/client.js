@@ -68,6 +68,8 @@ const CAT_LABELS = {
 const I18N = {
   de: {
     subtitle: "Texas Hold'em mit Kuhhandel-Tierkarten",
+    welcomeText: 'Neu hier? KuhPoker ist Texas Hold’em mit Tierkarten: Es zählt der Zahlenwert (Hahn 10 … Pferd 1000), nicht die Farbe — ohne Flush-Modus gibt es also keinen Flush.',
+    welcomeRules: '📖 Spielregeln ansehen',
     yourName: 'Dein Name',
     namePlaceholder: 'z. B. Anna',
     maxPlayers: 'Max. Spieler',
@@ -208,6 +210,8 @@ const I18N = {
   },
   en: {
     subtitle: "Texas Hold'em with Cow-Trader animal cards",
+    welcomeText: 'New here? KuhPoker is Texas Hold’em with animal cards: the number value counts (Rooster 10 … Horse 1000), not the suit — so without flush mode there is no flush.',
+    welcomeRules: '📖 View the rules',
     yourName: 'Your name',
     namePlaceholder: 'e.g. Anna',
     maxPlayers: 'Max players',
@@ -582,6 +586,23 @@ function segActivate(segId, btn) {
 }
 
 $('nameInput').value = localStorage.getItem('kuhpoker_name') || '';
+
+// Erstbesucher-Hinweis: einmalig einblenden, danach via localStorage merken.
+if ($('welcomeBanner') && !localStorage.getItem('kuhpoker_seen_welcome')) {
+  $('welcomeBanner').classList.remove('hidden');
+}
+const dismissWelcome = () => {
+  $('welcomeBanner')?.classList.add('hidden');
+  localStorage.setItem('kuhpoker_seen_welcome', '1');
+};
+if ($('welcomeClose')) $('welcomeClose').onclick = dismissWelcome;
+if ($('welcomeRulesBtn')) {
+  $('welcomeRulesBtn').onclick = () => {
+    const rules = $('rulesBody')?.closest('details');
+    if (rules) { rules.open = true; rules.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    dismissWelcome();
+  };
+}
 
 $('createBtn').onclick = () => {
   const name = $('nameInput').value.trim();
