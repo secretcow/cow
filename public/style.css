@@ -616,6 +616,11 @@ body.brainrot .cardref-name { font-size: 0.82rem; }
   .seat-info { font-size: 0.62rem; padding: 3px 6px; gap: 3px; }
   .pname { max-width: 40px; }
   .badge { font-size: 0.5rem; padding: 1px 3px; }
+  /* Lobby-Optionen stapeln: Label oben, Auswahl darunter über die volle Breite
+     (kein abgeschnittenes "5000", größere Tipp-Flächen). */
+  .opt-row { flex-direction: column; align-items: stretch; gap: 6px; }
+  .opt-row .seg { width: 100%; }
+  .opt-row .seg button { flex: 1 1 0; min-width: 0; padding: 8px 2px; }
 }
 
 /* Niedrige Viewports (Handy im Querformat): die Aktions-Buttons müssen ohne
