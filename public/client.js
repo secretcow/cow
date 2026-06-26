@@ -1149,6 +1149,18 @@ const SPECTATOR_SLOTS = {
   6: [[30, 84], [70, 84], [9, 46], [91, 46], [28, 13], [72, 13]],
 };
 
+// Zuschauer auf schmalem Bildschirm: Sitze in obere/untere Baender draengen und
+// Eck-Sitze nach innen ziehen, damit die mittlere Board-Reihe frei bleibt (sonst
+// ueberlappen die Seitensitze + ihre aufgedeckten Karten das Community-Board).
+const SPECTATOR_SLOTS_MOBILE = {
+  1: [[50, 12]],
+  2: [[50, 85], [50, 12]],
+  3: [[50, 86], [26, 12], [74, 12]],
+  4: [[30, 86], [70, 86], [22, 12], [78, 12]],
+  5: [[50, 87], [22, 84], [78, 84], [30, 11], [70, 11]],
+  6: [[30, 87], [70, 87], [22, 84], [78, 84], [30, 11], [70, 11]],
+};
+
 // Schmaler Bildschirm: Eck-Sitze nach innen ziehen und obere Reihe etwas tiefer,
 // damit nichts ueber den Tischrand hinausragt (sonst werden Sitze abgeschnitten).
 const OPP_SLOTS_MOBILE = {
@@ -1362,7 +1374,8 @@ function renderSeats(s, animate, revealAnim) {
 
   if (spectator) {
     // Zuschauer: alle Spieler rund um den Tisch verteilen (kein "Ich"-Sitz).
-    const slots = SPECTATOR_SLOTS[n] || SPECTATOR_SLOTS[6];
+    const specTable = window.innerWidth <= 820 ? SPECTATOR_SLOTS_MOBILE : SPECTATOR_SLOTS;
+    const slots = specTable[n] || specTable[6];
     s.players.forEach((p, i) => {
       const sl = slots[i] || [50, 50];
       place(p, false, sl[0], sl[1]);
