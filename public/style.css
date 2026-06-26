@@ -157,6 +157,21 @@ input { font: inherit; }
 .seg button.active { background: var(--gold); color: #1c1409; }
 .opt-hint { text-align: left; font-size: 0.76rem; color: #93a89c; margin: 4px 0 12px; line-height: 1.4; }
 
+/* Erweiterte Optionen einklappbar – haelt die Lobby standardmaessig kurz/clean. */
+.adv-opts { margin: 4px 0 8px; border-top: 1px solid rgba(212, 175, 55, 0.16); }
+.adv-opts > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  display: flex; align-items: center; gap: 8px; padding: 11px 2px 9px;
+  color: var(--gold); font-weight: 600; font-size: 0.86rem; letter-spacing: 0.4px;
+}
+.adv-opts > summary::-webkit-details-marker { display: none; }
+.adv-opts > summary::before {
+  content: '\25B8'; color: var(--gold-deep); display: inline-block; transition: transform 0.15s ease;
+}
+.adv-opts[open] > summary::before { transform: rotate(90deg); }
+.adv-opts > summary:hover { color: var(--gold-bright); }
+.adv-opts[open] > summary { margin-bottom: 4px; }
+
 .or { margin: 16px 0; color: #777; font-size: 0.85rem; }
 .join-row { display: flex; gap: 8px; }
 .code-input { text-transform: uppercase; letter-spacing: 4px; text-align: center; font-weight: 700; }
