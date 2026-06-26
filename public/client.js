@@ -975,8 +975,15 @@ function beep(freq, dur = 0.12, type = 'sine', gain = 0.08) {
 const sfx = {
   deal: () => beep(440, 0.08, 'triangle', 0.05),
   turn: () => beep(660, 0.1, 'sine', 0.09),
-  chip: () => beep(300, 0.07, 'square', 0.05),
-  win: () => { beep(523, 0.12); setTimeout(() => beep(659, 0.12), 110); setTimeout(() => beep(784, 0.2), 220); },
+  // Chip-"Klick": kurzer, hoeherer Triangle-Blip – knackiger & weniger buzzy als Square.
+  chip: () => beep(720, 0.045, 'triangle', 0.05),
+  // Sieg: volle Dur-Arpeggio-Aufloesung C-E-G-C (octave) – feierlicher.
+  win: () => {
+    beep(523, 0.12, 'sine', 0.08);
+    setTimeout(() => beep(659, 0.12, 'sine', 0.08), 100);
+    setTimeout(() => beep(784, 0.14, 'sine', 0.08), 200);
+    setTimeout(() => beep(1047, 0.26, 'sine', 0.07), 320);
+  },
   lose: () => { beep(330, 0.18, 'sine', 0.07); setTimeout(() => beep(247, 0.25, 'sine', 0.07), 140); },
 };
 $('muteBtn').textContent = muted ? '🔇' : '🔊';
@@ -1424,6 +1431,10 @@ function buildSeat(s, p, isMe, animate, revealAnim) {
   if (p.out) seat.classList.add('out');
   else if (p.folded) seat.classList.add('folded');
   if (p.id === s.toActId) seat.classList.add('active-turn');
+  // Gewinner am Rundenende hervorheben (Gold-Puls am Sitz).
+  if ((s.stage === 'handover' || s.stage === 'showdown') && s.result?.winners?.includes(p.seat)) {
+    seat.classList.add('winner');
+  }
 
   // "Letzte Aktion"-Blase (Check/Call/Raise …) – erscheint mit Pop-Animation.
   const ab = actionBubble(p.lastAction);

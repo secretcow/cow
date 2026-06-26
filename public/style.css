@@ -289,6 +289,15 @@ input { font: inherit; }
 .seat.active-turn .seat-info {
   box-shadow: 0 0 0 2px var(--gold), 0 0 18px rgba(232, 196, 104, 0.6);
 }
+/* Gewinner-Sitz: pulsierender Gold-Rahmen am Rundenende. */
+.seat.winner .seat-info {
+  border-color: var(--gold-bright);
+  animation: winnerPulse 1.1s ease-in-out infinite;
+}
+@keyframes winnerPulse {
+  0%, 100% { box-shadow: 0 0 0 1px var(--gold), 0 0 8px rgba(212, 175, 55, 0.45); }
+  50% { box-shadow: 0 0 0 2px var(--gold-bright), 0 0 22px rgba(232, 196, 104, 0.85); }
+}
 .seat.me .hole .card { width: 72px; height: 100px; }
 
 /* Zug-Countdown: schmaler Balken am Sitz des Spielers am Zug, laeuft ab. */
