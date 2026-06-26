@@ -447,7 +447,11 @@ body.brainrot .cardref-name { font-size: 0.82rem; }
    gewann – den dann leeren Pot ausblenden, damit die hoehere Ergebnis-Mitte nicht
    in den oberen Sitz ragt. Zusaetzlich die Mitte leicht nach unten ankern. */
 #game[data-stage="handover"] .pot { display: none; }
-#game[data-stage="handover"] .center { top: 53%; }
+/* Mitte am Rundenende leicht nach unten ankern UND ueber die Sitzebene heben.
+   .center hat transform -> eigener Stacking-Context; nur ein z-index auf .center
+   selbst hebt die Ergebnis-Panels ueber die (gross gerenderten) Sitzkarten, sodass
+   sie als saubere Panels ueber dem Filz liegen (Heads-up wie 3–6 Spieler). */
+#game[data-stage="handover"] .center { top: 53%; z-index: 8; }
 /* Strassen-Name als dezenter Wasserzeichen-Schriftzug hinter dem Board – aus dem
    Fluss genommen, damit die Mitte kompakt bleibt und nichts ueberlappt. */
 .stage-label {
