@@ -1,11 +1,20 @@
 :root {
-  --felt: #14694a;
-  --felt-dark: #0e4f37;
-  --gold: #e8c468;
-  --card-bg: #fdfcf5;
-  --ink: #1c1c1c;
-  --accent: #c0392b;
-  --win: #2ecc71;
+  /* ===== Classic-Casino-Palette ===== */
+  --felt: #0f6b46;        /* satter Smaragd-Filz */
+  --felt-dark: #0a4d32;   /* Vignette-Tiefe */
+  --felt-rim: #06351f;
+  --gold: #d4af37;        /* klassisches Casino-Gold */
+  --gold-bright: #f2dd8c;
+  --gold-deep: #9c7a1e;
+  --cream: #f4ead0;
+  --wood: #5a3a22;        /* Holz-Rail */
+  --wood-dark: #2e1d12;
+  --card-bg: #fbf8ee;
+  --ink: #1a140a;
+  --accent: #b0341f;      /* Herz-Rot / Akzent */
+  --win: #3fb469;
+  --felt-line: rgba(212, 175, 55, 0.16);
+  --serif: 'Cinzel', 'Playfair Display', Georgia, 'Times New Roman', serif;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -16,8 +25,10 @@ html { overflow-x: hidden; }
 
 body {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  background: radial-gradient(circle at 50% 0%, #1d2b24, #0a0f0c);
-  color: #f5f5f5;
+  /* Dämmriger Pokerraum: warmes Smaragd nach oben, fast schwarz am Rand. */
+  background:
+    radial-gradient(130% 90% at 50% -12%, #16432f 0%, #0a2117 42%, #050b08 100%) fixed;
+  color: #f1ead9;
   min-height: 100vh;
   overflow-x: hidden;
 }
@@ -29,23 +40,26 @@ body {
 .lobby-card {
   position: relative;
   margin-top: 6vh;
-  background: linear-gradient(160deg, rgba(20, 40, 30, 0.6), rgba(0, 0, 0, 0.45));
-  border: 1px solid rgba(232, 196, 104, 0.35);
-  border-radius: 20px;
-  padding: 30px 32px 26px;
+  background: linear-gradient(160deg, rgba(14, 60, 40, 0.55), rgba(6, 16, 11, 0.62));
+  border: 1px solid var(--gold-deep);
+  border-radius: 18px;
+  padding: 32px 32px 26px;
   width: min(460px, 94vw);
   text-align: center;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(212, 175, 55, 0.14), 0 26px 70px rgba(0, 0, 0, 0.66);
 }
 .logo {
-  font-size: 2.6rem;
-  background: linear-gradient(180deg, #f6d97a, #c8963a);
+  font-family: var(--serif);
+  font-weight: 700;
+  letter-spacing: 2px;
+  font-size: 2.5rem;
+  background: linear-gradient(180deg, var(--gold-bright), var(--gold), var(--gold-deep));
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.5));
 }
-.subtitle { color: var(--gold); margin-bottom: 22px; font-size: 0.95rem; }
+.subtitle { color: var(--gold); margin-bottom: 22px; font-size: 0.9rem; letter-spacing: 0.5px; }
 
 /* Profil-Leiste (Wallet + gewonnene Matches) */
 .profile-bar {
@@ -142,22 +156,32 @@ input { font: inherit; }
 .code-input { text-transform: uppercase; letter-spacing: 4px; text-align: center; font-weight: 700; }
 
 .btn {
-  font: inherit; cursor: pointer; border: 1px solid #4a5a50; background: #243029; color: #f0f0f0;
-  padding: 12px 18px; border-radius: 10px; font-weight: 600;
-  transition: transform 0.08s, background 0.15s, box-shadow 0.15s;
+  font: inherit; cursor: pointer;
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  background: linear-gradient(180deg, #2c3a31, #1e2a23);
+  color: var(--cream);
+  padding: 12px 18px; border-radius: 10px; font-weight: 600; letter-spacing: 0.3px;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: transform 0.08s, filter 0.15s, box-shadow 0.15s;
 }
-.btn:hover { background: #2e3d34; }
-.btn:active { transform: translateY(1px); }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.btn.primary { background: linear-gradient(180deg, #d9a838, #b8862a); border-color: #d9a838; color: #1c1409; }
-.btn.primary:hover { background: linear-gradient(180deg, #e8b948, #c8963a); }
+.btn:hover { filter: brightness(1.12); }
+.btn:active { transform: translateY(2px); box-shadow: 0 0 0 rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.06); }
+.btn:disabled { opacity: 0.42; cursor: not-allowed; box-shadow: none; }
+/* Gold, leicht erhaben */
+.btn.primary {
+  background: linear-gradient(180deg, var(--gold-bright) 0%, var(--gold) 48%, var(--gold-deep) 100%);
+  border-color: var(--gold-bright); color: #2a1e06; font-weight: 700;
+  box-shadow: 0 3px 0 var(--gold-deep), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+.btn.primary:hover { filter: brightness(1.06); }
+.btn.primary:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--gold-deep), inset 0 1px 0 rgba(255, 255, 255, 0.55); }
 .btn.small { padding: 8px 12px; font-size: 0.85rem; }
 .btn.big { font-size: 1.1rem; padding: 14px 28px; }
 .create-box .btn.primary, #createBtn { width: 100%; }
 .join-row .btn { width: auto; white-space: nowrap; }
 
 .waiting { margin-top: 22px; padding: 18px; background: rgba(232, 196, 104, 0.08); border-radius: 12px; }
-.room-code { font-size: 2.6rem; font-weight: 800; letter-spacing: 8px; color: var(--gold); margin: 8px 0 14px; }
+.room-code { font-family: var(--serif); font-size: 2.4rem; font-weight: 700; letter-spacing: 8px; color: var(--gold); margin: 8px 0 14px; }
 .player-list { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 14px 0; }
 .lp { background: rgba(255, 255, 255, 0.08); padding: 6px 12px; border-radius: 999px; font-size: 0.85rem; font-weight: 600; }
 .lp.off { opacity: 0.5; }
@@ -203,14 +227,31 @@ input { font: inherit; }
   position: relative;
   width: min(960px, 96vw);
   margin: 0 auto;
-  background: radial-gradient(ellipse at center, var(--felt), var(--felt-dark));
-  border: 10px solid #5a3a1e;
+  background: radial-gradient(ellipse at 50% 42%, var(--felt) 0%, var(--felt-dark) 68%, var(--felt-rim) 100%);
+  border: none;
   border-radius: 46% / 30%;
-  box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.45), 0 12px 40px rgba(0, 0, 0, 0.5);
+  /* Holz-Rail als Ring (Holz + dunkle Kante) + Gold-Naht innen + Filz-Vignette. */
+  box-shadow:
+    inset 0 0 0 3px rgba(212, 175, 55, 0.45),
+    inset 0 0 110px rgba(0, 0, 0, 0.5),
+    inset 0 8px 26px rgba(255, 255, 255, 0.05),
+    0 0 0 13px var(--wood),
+    0 0 0 15px var(--wood-dark),
+    0 22px 55px rgba(0, 0, 0, 0.6);
   height: min(60vh, 560px);
   min-height: 430px;
 }
-.seats { position: absolute; inset: 0; }
+/* Dezente Setz-Linie auf dem Filz (klassischer Pokertisch). */
+.table::before {
+  content: '';
+  position: absolute;
+  inset: 9% 7%;
+  border-radius: 46% / 32%;
+  border: 1px solid var(--felt-line);
+  pointer-events: none;
+  z-index: 0;
+}
+.seats { position: absolute; inset: 0; z-index: 1; }
 
 .seat {
   position: absolute;
@@ -299,7 +340,8 @@ input { font: inherit; }
 
 .seat-info {
   display: flex; align-items: center; gap: 8px;
-  background: rgba(0, 0, 0, 0.5); padding: 5px 12px; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.52); padding: 5px 12px; border-radius: 999px;
+  border: 1px solid rgba(212, 175, 55, 0.2);
   font-size: 0.85rem; max-width: 100%;
 }
 .pname { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90px; }
@@ -312,9 +354,15 @@ input { font: inherit; }
 .blind-badge { background: #3a557d; color: #fff; }
 
 .hole { display: flex; gap: 6px; }
+/* Geriffelte Casino-Chip-Optik: Gold-Disc mit weißem + tiefem Riffel-Ring. */
 .bet-chip {
-  background: #b8862a; color: #1c1409; font-weight: 800; padding: 3px 10px;
-  border-radius: 999px; font-size: 0.8rem; border: 2px solid #f0d68a; white-space: nowrap;
+  background: radial-gradient(circle at 50% 36%, #f6e69a 0%, var(--gold) 56%, #b8901f 100%);
+  color: #2a1e06; font-weight: 800; padding: 3px 11px;
+  border-radius: 999px; font-size: 0.8rem; white-space: nowrap;
+  box-shadow:
+    inset 0 0 0 2px rgba(255, 255, 255, 0.55),
+    inset 0 0 0 4px var(--gold-deep),
+    0 2px 5px rgba(0, 0, 0, 0.5);
 }
 .hand-label {
   background: rgba(0, 0, 0, 0.6); color: var(--gold); padding: 2px 10px;
@@ -340,13 +388,13 @@ input { font: inherit; }
 
 /* ===== Karten ===== */
 .card {
-  --suit: #8a6d1e;
+  --suit: #1a140a;
   width: 56px; height: 80px;
-  background: var(--card-bg); border-radius: 8px; color: var(--ink);
+  background: linear-gradient(165deg, #fffdf6, #f1e9d4); border-radius: 7px; color: var(--ink);
   display: flex; flex-direction: column; align-items: center; justify-content: space-between;
-  padding: 4px 4px; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+  padding: 4px 4px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(0, 0, 0, 0.08);
   position: relative; font-weight: 700; user-select: none;
-  border-top: 4px solid var(--suit);
 }
 .card-corner {
   display: flex; align-items: center; gap: 3px; align-self: flex-start;
@@ -360,8 +408,15 @@ input { font: inherit; }
 body.brainrot .card-name { font-size: 0.5rem; line-height: 1.04; }
 body.brainrot .cardref-name { font-size: 0.82rem; }
 .card.back {
-  background: repeating-linear-gradient(45deg, #6b3f1d, #6b3f1d 8px, #7a4a26 8px, #7a4a26 16px);
-  border: 2px solid #a06a35; border-top: 4px solid #a06a35;
+  background:
+    repeating-linear-gradient(45deg, rgba(212, 175, 55, 0.20) 0 6px, transparent 6px 12px),
+    repeating-linear-gradient(-45deg, rgba(212, 175, 55, 0.20) 0 6px, transparent 6px 12px),
+    linear-gradient(160deg, #0f5a3c, #093a28);
+  background-color: #0a3d28;
+  box-shadow:
+    inset 0 0 0 2px var(--gold-deep),
+    inset 0 0 0 4px rgba(0, 0, 0, 0.3),
+    0 3px 8px rgba(0, 0, 0, 0.45);
 }
 .back-pattern { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 1.6rem; opacity: 0.5; }
 .card.placeholder { background: rgba(255, 255, 255, 0.06); border: 2px dashed rgba(255, 255, 255, 0.18); box-shadow: none; }
@@ -372,7 +427,15 @@ body.brainrot .cardref-name { font-size: 0.82rem; }
   position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   display: flex; flex-direction: column; align-items: center; gap: 10px; width: 90%;
 }
-.pot { position: relative; z-index: 2; background: rgba(0, 0, 0, 0.5); padding: 5px 18px; border-radius: 999px; font-weight: 700; color: var(--gold); font-size: 1.05rem; }
+.pot {
+  position: relative; z-index: 2;
+  background: linear-gradient(180deg, rgba(20, 12, 4, 0.88), rgba(8, 5, 2, 0.92));
+  border: 1px solid var(--gold-deep);
+  box-shadow: inset 0 0 0 1px rgba(212, 175, 55, 0.22), 0 4px 14px rgba(0, 0, 0, 0.5);
+  padding: 6px 20px; border-radius: 999px; font-weight: 700;
+  color: var(--gold-bright); font-size: 1.02rem;
+  font-family: var(--serif); letter-spacing: 1px;
+}
 .community { position: relative; z-index: 2; display: flex; gap: 6px; min-height: 80px; }
 /* Strassen-Name als dezenter Wasserzeichen-Schriftzug hinter dem Board – aus dem
    Fluss genommen, damit die Mitte kompakt bleibt und nichts ueberlappt. */
