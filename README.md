@@ -68,7 +68,7 @@ npm run test:unit    # Engine/Hand-Eval/Store (schnell)
 npm run test:e2e     # Socket-End-to-End (startet den Server)
 ```
 
-Stand: 180 Unit- + 66 E2E-Assertions grün.
+Stand: 199 Unit- + 66 E2E-Assertions grün.
 
 ## Deployment
 
