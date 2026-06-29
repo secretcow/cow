@@ -359,9 +359,6 @@ function t(key, ...args) {
 function streetName(l, s) {
   return { flop: 'Flop', turn: 'Turn', river: 'River' }[s] || s;
 }
-function animalName(l, rank) {
-  return deck(rank)[l];
-}
 // Kurzname für die enge Kartenfläche (fällt auf den vollen Namen zurück).
 function cardFaceName(rank) {
   const a = deck(rank);
